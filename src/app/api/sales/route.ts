@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { triggerSync } from '@/lib/middleware/sync-middleware'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
   try {
@@ -120,6 +123,28 @@ export async function POST(request: NextRequest) {
         }
       }
     })
+
+    // Trigger sync for inventory and accounting updates
+    try {
+      const session = await getServerSession(authOptions)
+      if (session?.user?.id) {
+        // Trigger sync for each item to update inventory
+        for (const item of sale.items) {
+          await triggerSync('sales', 'sale_created', {
+            entityType: 'sale',
+            entityId: sale.id,
+            productId: item.productId,
+            quantity: item.quantity,
+            saleId: sale.id,
+            customerId: sale.customerId,
+            total: sale.total
+          }, session.user.id)
+        }
+      }
+    } catch (syncError) {
+      console.error('Sync trigger error:', syncError)
+      // Don't fail the sale creation due to sync errors
+    }
 
     return NextResponse.json({
       message: 'Sale created successfully',
