@@ -95,7 +95,11 @@
   - Write tests for notification counter accuracy and real-time updates
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
 
-- [ ] 11. Activity Feed Components
+- [x] 11. Activity Feed Components
+
+
+
+
 
   - Create ActivityFeed component with filtering, pagination, and real-time updates
   - Implement role-based activity filtering to show only relevant activities
@@ -105,7 +109,9 @@
   - Write tests for activity display and filtering logic
   - _Requirements: 1.2, 1.4, 1.5, 1.6_
 
-- [ ] 12. Management Dashboard Integration
+- [-] 12. Management Dashboard Integration
+
+
 
   - Update dashboard components to display real-time statistics from all modules
   - Create dashboard cards that reflect current data from central inventory pool
