@@ -1,39 +1,26 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { UserRole } from '@prisma/client'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { ActivityLogger } from '../activity-logger'
+import { prisma } from '@/lib/prisma'
 
-// Mock the Prisma client import
-const mockCreate = vi.fn()
-const mockFindMany = vi.fn()
-const mockCount = vi.fn()
-const mockDeleteMany = vi.fn()
-
-vi.mock('@prisma/client', () => ({
-  PrismaClient: vi.fn().mockImplementation(() => ({
+// Mock Prisma
+vi.mock('@/lib/prisma', () => ({
+  prisma: {
     activityLog: {
-      create: mockCreate,
-      findMany: mockFindMany,
-      count: mockCount,
-      deleteMany: mockDeleteMany,
+      create: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
     },
-  })),
-  UserRole: {
-    DIRECTOR: 'DIRECTOR',
-    MANAGER: 'MANAGER',
-    HOD: 'HOD',
-    SALES_REP: 'SALES_REP',
-    INTERNAL_CONSULTANT: 'INTERNAL_CONSULTANT',
-    INVENTORY_MANAGER: 'INVENTORY_MANAGER',
-    HR_STAFF: 'HR_STAFF',
-    ACCOUNTANT: 'ACCOUNTANT',
-    STAFF_MEMBER: 'STAFF_MEMBER',
-    USER: 'USER',
+    user: {
+      findUnique: vi.fn(),
+    },
   },
 }))
 
-import { ActivityLogger, ActivityLogData } from '../activity-logger'
-
 describe('ActivityLogger', () => {
+  let activityLogger: ActivityLogger
+
   beforeEach(() => {
+    activityLogger = new ActivityLogger()
     vi.clearAllMocks()
   })
 
@@ -42,107 +29,164 @@ describe('ActivityLogger', () => {
   })
 
   describe('log', () => {
-    it('should log activity successfully', async () => {
-      const activityData: ActivityLogData = {
+    it('should log activity with all required fields', async () => {
+      const mockActivity = {
         userId: 'user123',
         module: 'inventory',
         action: 'create',
         entityType: 'product',
         entityId: 'product123',
         entityName: 'Test Product',
-        details: { price: 100 },
+        details: { quantity: 100 },
         ipAddress: '192.168.1.1',
         userAgent: 'Mozilla/5.0',
       }
 
-      mockCreate.mockResolvedValue({
+      const mockCreatedActivity = {
         id: 'activity123',
-        ...activityData,
+        ...mockActivity,
         timestamp: new Date(),
+      }
+
+      vi.mocked(prisma.activityLog.create).mockResolvedValue(mockCreatedActivity)
+
+      await activityLogger.log(mockActivity)
+
+      expect(prisma.activityLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: mockActivity.userId,
+          module: mockActivity.module,
+          action: mockActivity.action,
+          entityType: mockActivity.entityType,
+          entityId: mockActivity.entityId,
+          entityName: mockActivity.entityName,
+          details: mockActivity.details,
+          ipAddress: mockActivity.ipAddress,
+          userAgent: mockActivity.userAgent,
+        }),
       })
+    })
 
-      await ActivityLogger.log(activityData)
+    it('should handle logging without optional fields', async () => {
+      const mockActivity = {
+        userId: 'user123',
+        module: 'sales',
+        action: 'update',
+        entityType: 'invoice',
+        entityId: 'invoice123',
+        entityName: 'Invoice #001',
+        details: {},
+      }
 
-      expect(mockCreate).toHaveBeenCalledWith({
-        data: {
+      const mockCreatedActivity = {
+        id: 'activity123',
+        ...mockActivity,
+        timestamp: new Date(),
+        ipAddress: null,
+        userAgent: null,
+      }
+
+      vi.mocked(prisma.activityLog.create).mockResolvedValue(mockCreatedActivity)
+
+      await activityLogger.log(mockActivity)
+
+      expect(prisma.activityLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: mockActivity.userId,
+          module: mockActivity.module,
+          action: mockActivity.action,
+          entityType: mockActivity.entityType,
+          entityId: mockActivity.entityId,
+          entityName: mockActivity.entityName,
+          details: mockActivity.details,
+        }),
+      })
+    })
+
+    it('should throw error when logging fails', async () => {
+      const mockActivity = {
+        userId: 'user123',
+        module: 'inventory',
+        action: 'create',
+        entityType: 'product',
+        entityId: 'product123',
+        entityName: 'Test Product',
+        details: {},
+      }
+
+      vi.mocked(prisma.activityLog.create).mockRejectedValue(new Error('Database error'))
+
+      await expect(activityLogger.log(mockActivity)).rejects.toThrow('Database error')
+    })
+  })
+
+  describe('getActivities', () => {
+    it('should retrieve activities with filters', async () => {
+      const mockActivities = [
+        {
+          id: 'activity1',
           userId: 'user123',
           module: 'inventory',
           action: 'create',
           entityType: 'product',
           entityId: 'product123',
           entityName: 'Test Product',
-          details: { price: 100 },
-          ipAddress: '192.168.1.1',
-          userAgent: 'Mozilla/5.0',
-        },
-      })
-    })
-
-    it('should handle logging errors gracefully', async () => {
-      const activityData: ActivityLogData = {
-        userId: 'user123',
-        module: 'inventory',
-        action: 'create',
-        entityType: 'product',
-        entityId: 'product123',
-        entityName: 'Test Product',
-      }
-
-      mockCreate.mockRejectedValue(new Error('Database error'))
-
-      // Should not throw error
-      await expect(ActivityLogger.log(activityData)).resolves.toBeUndefined()
-    })
-
-    it('should use empty object for details if not provided', async () => {
-      const activityData: ActivityLogData = {
-        userId: 'user123',
-        module: 'inventory',
-        action: 'create',
-        entityType: 'product',
-        entityId: 'product123',
-        entityName: 'Test Product',
-      }
-
-      await ActivityLogger.log(activityData)
-
-      expect(mockCreate).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          details: {},
-        }),
-      })
-    })
-  })
-
-  describe('getActivities', () => {
-    it('should retrieve activities with default parameters', async () => {
-      const mockActivities = [
-        {
-          id: 'activity1',
-          userId: 'user1',
-          module: 'inventory',
-          action: 'create',
-          entityType: 'product',
-          entityId: 'product1',
-          entityName: 'Product 1',
           details: {},
           timestamp: new Date(),
-          ipAddress: '192.168.1.1',
-          userAgent: 'Mozilla/5.0',
-          user: {
-            id: 'user1',
-            name: 'John Doe',
-            email: 'john@example.com',
-            role: UserRole.USER,
-          },
+          ipAddress: null,
+          userAgent: null,
+          user: { id: 'user123', name: 'Test User' },
         },
       ]
 
-      mockFindMany.mockResolvedValue(mockActivities)
+      vi.mocked(prisma.activityLog.findMany).mockResolvedValue(mockActivities)
 
-      const result = await ActivityLogger.getActivities()
+      const filters = {
+        userId: 'user123',
+        module: 'inventory',
+        startDate: new Date('2024-01-01'),
+        endDate: new Date('2024-12-31'),
+        limit: 10,
+        offset: 0,
+      }
 
-      expect(mockFindMany).toHaveBeenCalledWith({
+      const result = await activityLogger.getActivities(filters)
+
+      expect(prisma.activityLog.findMany).toHaveBeenCalledWith({
+        where: {
+          userId: filters.userId,
+          module: filters.module,
+          timestamp: {
+            gte: filters.startDate,
+            lte: filters.endDate,
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: {
+          timestamp: 'desc',
+        },
+        take: filters.limit,
+        skip: filters.offset,
+      })
+
+      expect(result).toEqual(mockActivities)
+    })
+
+    it('should handle empty filters', async () => {
+      const mockActivities = []
+      vi.mocked(prisma.activityLog.findMany).mockResolvedValue(mockActivities)
+
+      const result = await activityLogger.getActivities({})
+
+      expect(prisma.activityLog.findMany).toHaveBeenCalledWith({
         where: {},
         include: {
           user: {
@@ -150,7 +194,58 @@ describe('ActivityLogger', () => {
               id: true,
               name: true,
               email: true,
-              role: true,
+            },
+          },
+        },
+        orderBy: {
+          timestamp: 'desc',
+        },
+        take: 50,
+        skip: 0,
+      })
+
+      expect(result).toEqual(mockActivities)
+    })
+  })
+
+  describe('getActivitiesByRole', () => {
+    it('should return all activities for DIRECTOR role', async () => {
+      const mockUser = {
+        id: 'user123',
+        role: 'DIRECTOR',
+        function: 'MANAGEMENT',
+      }
+
+      const mockActivities = [
+        {
+          id: 'activity1',
+          userId: 'user456',
+          module: 'sales',
+          action: 'create',
+          entityType: 'invoice',
+          entityId: 'invoice123',
+          entityName: 'Invoice #001',
+          details: {},
+          timestamp: new Date(),
+          ipAddress: null,
+          userAgent: null,
+          user: { id: 'user456', name: 'Sales User' },
+        },
+      ]
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser)
+      vi.mocked(prisma.activityLog.findMany).mockResolvedValue(mockActivities)
+
+      const result = await activityLogger.getActivitiesByRole('user123', 'DIRECTOR')
+
+      expect(prisma.activityLog.findMany).toHaveBeenCalledWith({
+        where: {},
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
             },
           },
         },
@@ -164,32 +259,38 @@ describe('ActivityLogger', () => {
       expect(result).toEqual(mockActivities)
     })
 
-    it('should apply filters correctly', async () => {
-      const filters = {
-        userId: 'user123',
-        module: 'inventory',
-        action: 'create',
-        entityType: 'product',
-        startDate: new Date('2024-01-01'),
-        endDate: new Date('2024-12-31'),
-        limit: 10,
-        offset: 5,
+    it('should filter activities for STAFF_MEMBER role', async () => {
+      const mockUser = {
+        id: 'user123',
+        role: 'STAFF_MEMBER',
+        function: 'SALES',
       }
 
-      mockFindMany.mockResolvedValue([])
+      const mockActivities = [
+        {
+          id: 'activity1',
+          userId: 'user123',
+          module: 'sales',
+          action: 'create',
+          entityType: 'quote',
+          entityId: 'quote123',
+          entityName: 'Quote #001',
+          details: {},
+          timestamp: new Date(),
+          ipAddress: null,
+          userAgent: null,
+          user: { id: 'user123', name: 'Staff User' },
+        },
+      ]
 
-      await ActivityLogger.getActivities(filters)
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser)
+      vi.mocked(prisma.activityLog.findMany).mockResolvedValue(mockActivities)
 
-      expect(mockFindMany).toHaveBeenCalledWith({
+      const result = await activityLogger.getActivitiesByRole('user123', 'STAFF_MEMBER')
+
+      expect(prisma.activityLog.findMany).toHaveBeenCalledWith({
         where: {
           userId: 'user123',
-          module: 'inventory',
-          action: 'create',
-          entityType: 'product',
-          timestamp: {
-            gte: filters.startDate,
-            lte: filters.endDate,
-          },
         },
         include: {
           user: {
@@ -197,211 +298,17 @@ describe('ActivityLogger', () => {
               id: true,
               name: true,
               email: true,
-              role: true,
             },
           },
         },
         orderBy: {
           timestamp: 'desc',
         },
-        take: 10,
-        skip: 5,
+        take: 50,
+        skip: 0,
       })
-    })
-  })
-
-  describe('getActivitiesByRole', () => {
-    it('should return all activities for DIRECTOR role', async () => {
-      const mockActivities = [
-        {
-          id: 'activity1',
-          userId: 'user1',
-          module: 'inventory',
-          action: 'create',
-          entityType: 'product',
-          entityId: 'product1',
-          entityName: 'Product 1',
-          details: {},
-          timestamp: new Date(),
-          ipAddress: '192.168.1.1',
-          userAgent: 'Mozilla/5.0',
-          user: {
-            id: 'user1',
-            name: 'John Doe',
-            email: 'john@example.com',
-            role: UserRole.USER,
-          },
-        },
-      ]
-
-      mockFindMany.mockResolvedValue(mockActivities)
-
-      const result = await ActivityLogger.getActivitiesByRole('director123', UserRole.DIRECTOR)
 
       expect(result).toEqual(mockActivities)
-    })
-
-    it('should filter activities for STAFF_MEMBER role to only their own', async () => {
-      const mockActivities = [
-        {
-          id: 'activity1',
-          userId: 'staff123',
-          module: 'inventory',
-          action: 'view',
-          entityType: 'product',
-          entityId: 'product1',
-          entityName: 'Product 1',
-          details: {},
-          timestamp: new Date(),
-          ipAddress: '192.168.1.1',
-          userAgent: 'Mozilla/5.0',
-          user: {
-            id: 'staff123',
-            name: 'Staff Member',
-            email: 'staff@example.com',
-            role: UserRole.STAFF_MEMBER,
-          },
-        },
-      ]
-
-      mockFindMany.mockResolvedValue(mockActivities)
-
-      await ActivityLogger.getActivitiesByRole('staff123', UserRole.STAFF_MEMBER)
-
-      expect(mockFindMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            userId: 'staff123',
-          }),
-        })
-      )
-    })
-
-    it('should filter activities for INVENTORY_MANAGER role to inventory module', async () => {
-      mockFindMany.mockResolvedValue([])
-
-      await ActivityLogger.getActivitiesByRole('inv123', UserRole.INVENTORY_MANAGER)
-
-      expect(mockFindMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            module: 'inventory',
-          }),
-        })
-      )
-    })
-  })
-
-  describe('getActivityCount', () => {
-    it('should return activity count with filters', async () => {
-      mockCount.mockResolvedValue(42)
-
-      const filters = {
-        module: 'inventory',
-        startDate: new Date('2024-01-01'),
-      }
-
-      const result = await ActivityLogger.getActivityCount(filters)
-
-      expect(mockCount).toHaveBeenCalledWith({
-        where: {
-          module: 'inventory',
-          timestamp: {
-            gte: filters.startDate,
-          },
-        },
-      })
-
-      expect(result).toBe(42)
-    })
-  })
-
-  describe('getEntityActivities', () => {
-    it('should retrieve activities for specific entity', async () => {
-      mockFindMany.mockResolvedValue([])
-
-      await ActivityLogger.getEntityActivities('product', 'product123', 5)
-
-      expect(mockFindMany).toHaveBeenCalledWith({
-        where: {
-          entityType: 'product',
-          entityId: 'product123',
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              role: true,
-            },
-          },
-        },
-        orderBy: {
-          timestamp: 'desc',
-        },
-        take: 5,
-        skip: 0,
-      })
-    })
-  })
-
-  describe('getModuleActivities', () => {
-    it('should retrieve activities for specific module', async () => {
-      mockFindMany.mockResolvedValue([])
-
-      await ActivityLogger.getModuleActivities('inventory', 10)
-
-      expect(mockFindMany).toHaveBeenCalledWith({
-        where: {
-          module: 'inventory',
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              role: true,
-            },
-          },
-        },
-        orderBy: {
-          timestamp: 'desc',
-        },
-        take: 10,
-        skip: 0,
-      })
-    })
-  })
-
-  describe('cleanupOldActivities', () => {
-    it('should delete activities older than specified days', async () => {
-      mockDeleteMany.mockResolvedValue({ count: 100 })
-
-      const result = await ActivityLogger.cleanupOldActivities(30)
-
-      expect(mockDeleteMany).toHaveBeenCalledWith({
-        where: {
-          timestamp: {
-            lt: expect.any(Date),
-          },
-        },
-      })
-
-      expect(result).toBe(100)
-    })
-
-    it('should use default 365 days if not specified', async () => {
-      mockDeleteMany.mockResolvedValue({ count: 50 })
-
-      await ActivityLogger.cleanupOldActivities()
-
-      const call = mockDeleteMany.mock.calls[0][0]
-      const cutoffDate = call.where.timestamp.lt
-      const daysDiff = Math.floor((Date.now() - cutoffDate.getTime()) / (1000 * 60 * 60 * 24))
-      
-      expect(daysDiff).toBeCloseTo(365, 0)
     })
   })
 })

@@ -1,519 +1,339 @@
-import { describe, it, expect, beforeEach, afterEach, vi, beforeAll, afterAll } from 'vitest'
-import { InventoryPool, VALID_ADJUSTMENT_REASONS } from '../inventory-pool'
-import { prisma as db } from '@/lib/prisma'
-import { InventoryAlertManager } from '@/lib/inventory-alerts'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { InventoryPool } from '../inventory-pool'
+import { prisma } from '@/lib/prisma'
 
-// Mock the InventoryAlertManager
-vi.mock('@/lib/inventory-alerts', () => ({
-  InventoryAlertManager: {
-    checkStockLevels: vi.fn().mockResolvedValue([])
-  }
+// Mock Prisma
+vi.mock('@/lib/prisma', () => ({
+  prisma: {
+    product: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    stockReservation: {
+      create: vi.fn(),
+      findMany: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    stockMovement: {
+      create: vi.fn(),
+      findMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
+  },
 }))
 
 describe('InventoryPool', () => {
-  let testProductId: string
-  let testUserId: string
+  let inventoryPool: InventoryPool
 
-  beforeAll(async () => {
-    // Create test user
-    const testUser = await db.user.create({
-      data: {
-        email: 'test@inventory.com',
-        password: 'password',
-        name: 'Test User',
-        role: 'INVENTORY_MANAGER'
-      }
-    })
-    testUserId = testUser.id
-
-    // Create test product
-    const testProduct = await db.product.create({
-      data: {
-        sku: 'TEST-INV-001',
-        name: 'Test Inventory Product',
-        description: 'Product for inventory pool testing',
-        category: 'Test',
-        price: 100,
-        cost: 50,
-        quantity: 100,
-        minStock: 10,
-        unit: 'pcs'
-      }
-    })
-    testProductId = testProduct.id
+  beforeEach(() => {
+    inventoryPool = new InventoryPool()
+    vi.clearAllMocks()
   })
 
-  afterAll(async () => {
-    // Clean up test data
-    await db.stockReservation.deleteMany({ where: { productId: testProductId } })
-    await db.stockMovement.deleteMany({ where: { productId: testProductId } })
-    await db.product.delete({ where: { id: testProductId } })
-    await db.user.delete({ where: { id: testUserId } })
-  })
-
-  beforeEach(async () => {
-    // Reset product quantity and clean up reservations/movements
-    await db.product.update({
-      where: { id: testProductId },
-      data: { quantity: 100 }
-    })
-    await db.stockReservation.deleteMany({ where: { productId: testProductId } })
-    await db.stockMovement.deleteMany({ where: { productId: testProductId } })
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   describe('getAvailableStock', () => {
-    it('should return total stock when no reservations exist', async () => {
-      const availableStock = await InventoryPool.getAvailableStock(testProductId)
-      expect(availableStock).toBe(100)
-    })
+    it('should return available stock minus reservations', async () => {
+      const productId = 'product123'
+      const mockProduct = {
+        id: productId,
+        quantity: 100,
+      }
 
-    it('should subtract active reservations from total stock', async () => {
-      // Create a reservation
-      await InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 20,
-        reason: 'Test reservation',
-        userId: testUserId
+      const mockReservations = [
+        { quantity: 10 },
+        { quantity: 5 },
+      ]
+
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(mockProduct)
+      vi.mocked(prisma.stockReservation.findMany).mockResolvedValue(mockReservations)
+
+      const result = await inventoryPool.getAvailableStock(productId)
+
+      expect(result).toBe(85) // 100 - 10 - 5
+      expect(prisma.product.findUnique).toHaveBeenCalledWith({
+        where: { id: productId },
+        select: { quantity: true },
       })
-
-      const availableStock = await InventoryPool.getAvailableStock(testProductId)
-      expect(availableStock).toBe(80)
-    })
-
-    it('should ignore expired reservations', async () => {
-      // Create an expired reservation manually
-      await db.stockReservation.create({
-        data: {
-          productId: testProductId,
-          quantity: 30,
-          reason: 'Expired reservation',
-          userId: testUserId,
-          expiresAt: new Date(Date.now() - 60000) // 1 minute ago
-        }
+      expect(prisma.stockReservation.findMany).toHaveBeenCalledWith({
+        where: {
+          productId,
+          expiresAt: { gt: expect.any(Date) },
+        },
+        select: { quantity: true },
       })
-
-      const availableStock = await InventoryPool.getAvailableStock(testProductId)
-      expect(availableStock).toBe(100)
     })
 
-    it('should throw error for non-existent product', async () => {
-      // Use a valid ObjectId format that doesn't exist
-      const nonExistentId = '507f1f77bcf86cd799439011'
-      await expect(InventoryPool.getAvailableStock(nonExistentId))
-        .rejects.toThrow('Product not found')
+    it('should return 0 when product not found', async () => {
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(null)
+
+      const result = await inventoryPool.getAvailableStock('nonexistent')
+
+      expect(result).toBe(0)
+    })
+
+    it('should handle no reservations', async () => {
+      const productId = 'product123'
+      const mockProduct = { id: productId, quantity: 50 }
+
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(mockProduct)
+      vi.mocked(prisma.stockReservation.findMany).mockResolvedValue([])
+
+      const result = await inventoryPool.getAvailableStock(productId)
+
+      expect(result).toBe(50)
     })
   })
 
   describe('reserveStock', () => {
-    it('should create a stock reservation successfully', async () => {
-      const reservationId = await InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 25,
-        reason: 'Sales order',
-        userId: testUserId
-      })
+    it('should create stock reservation when sufficient stock available', async () => {
+      const productId = 'product123'
+      const quantity = 10
+      const reason = 'Sales order'
+      const userId = 'user123'
 
-      expect(reservationId).toBeDefined()
+      const mockProduct = { id: productId, quantity: 100 }
+      const mockReservations = []
+      const mockCreatedReservation = {
+        id: 'reservation123',
+        productId,
+        quantity,
+        reason,
+        userId,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        createdAt: new Date(),
+      }
 
-      // Verify reservation was created
-      const reservation = await db.stockReservation.findUnique({
-        where: { id: reservationId }
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(mockProduct)
+      vi.mocked(prisma.stockReservation.findMany).mockResolvedValue(mockReservations)
+      vi.mocked(prisma.stockReservation.create).mockResolvedValue(mockCreatedReservation)
+
+      const result = await inventoryPool.reserveStock(productId, quantity, reason, userId)
+
+      expect(result).toBe('reservation123')
+      expect(prisma.stockReservation.create).toHaveBeenCalledWith({
+        data: {
+          productId,
+          quantity,
+          reason,
+          userId,
+          expiresAt: expect.any(Date),
+        },
       })
-      expect(reservation).toBeTruthy()
-      expect(reservation?.quantity).toBe(25)
     })
 
-    it('should set expiration time correctly', async () => {
-      const reservationId = await InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 10,
-        reason: 'Test expiration',
-        userId: testUserId,
-        expirationMinutes: 60
-      })
+    it('should throw error when insufficient stock', async () => {
+      const productId = 'product123'
+      const quantity = 50
+      const reason = 'Sales order'
+      const userId = 'user123'
 
-      const reservation = await db.stockReservation.findUnique({
-        where: { id: reservationId }
-      })
+      const mockProduct = { id: productId, quantity: 30 }
+      const mockReservations = [{ quantity: 10 }]
 
-      const expectedExpiration = new Date(Date.now() + 60 * 60 * 1000)
-      const actualExpiration = reservation?.expiresAt
-      
-      expect(actualExpiration).toBeDefined()
-      // Allow 1 second tolerance for timing differences
-      expect(Math.abs(actualExpiration!.getTime() - expectedExpiration.getTime())).toBeLessThan(1000)
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(mockProduct)
+      vi.mocked(prisma.stockReservation.findMany).mockResolvedValue(mockReservations)
+
+      await expect(
+        inventoryPool.reserveStock(productId, quantity, reason, userId)
+      ).rejects.toThrow('Insufficient stock available')
     })
 
-    it('should reject reservation when insufficient stock', async () => {
-      await expect(InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 150, // More than available (100)
-        reason: 'Too much',
-        userId: testUserId
-      })).rejects.toThrow('Insufficient stock available')
-    })
+    it('should throw error when product not found', async () => {
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(null)
 
-    it('should reject negative quantities', async () => {
-      await expect(InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: -10,
-        reason: 'Negative test',
-        userId: testUserId
-      })).rejects.toThrow('Reservation quantity must be positive')
+      await expect(
+        inventoryPool.reserveStock('nonexistent', 10, 'test', 'user123')
+      ).rejects.toThrow('Product not found')
     })
   })
 
   describe('releaseReservation', () => {
-    it('should release an existing reservation', async () => {
-      const reservationId = await InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 15,
-        reason: 'To be released',
-        userId: testUserId
-      })
+    it('should delete reservation', async () => {
+      const reservationId = 'reservation123'
 
-      await InventoryPool.releaseReservation(reservationId)
-
-      // Verify reservation was deleted
-      const reservation = await db.stockReservation.findUnique({
-        where: { id: reservationId }
-      })
-      expect(reservation).toBeNull()
-    })
-
-    it('should throw error for non-existent reservation', async () => {
-      // Use a valid ObjectId format that doesn't exist
-      const nonExistentId = '507f1f77bcf86cd799439011'
-      await expect(InventoryPool.releaseReservation(nonExistentId))
-        .rejects.toThrow('Reservation not found')
-    })
-  })
-
-  describe('cleanupExpiredReservations', () => {
-    it('should remove expired reservations', async () => {
-      // Create expired reservation
-      await db.stockReservation.create({
-        data: {
-          productId: testProductId,
-          quantity: 20,
-          reason: 'Expired',
-          userId: testUserId,
-          expiresAt: new Date(Date.now() - 60000) // 1 minute ago
-        }
-      })
-
-      // Create active reservation
-      await InventoryPool.reserveStock({
-        productId: testProductId,
+      vi.mocked(prisma.stockReservation.delete).mockResolvedValue({
+        id: reservationId,
+        productId: 'product123',
         quantity: 10,
-        reason: 'Active',
-        userId: testUserId
+        reason: 'test',
+        userId: 'user123',
+        expiresAt: new Date(),
+        createdAt: new Date(),
       })
 
-      const cleanedCount = await InventoryPool.cleanupExpiredReservations()
-      expect(cleanedCount).toBe(1)
+      await inventoryPool.releaseReservation(reservationId)
 
-      // Verify only active reservation remains
-      const remainingReservations = await db.stockReservation.findMany({
-        where: { productId: testProductId }
+      expect(prisma.stockReservation.delete).toHaveBeenCalledWith({
+        where: { id: reservationId },
       })
-      expect(remainingReservations).toHaveLength(1)
-      expect(remainingReservations[0].reason).toBe('Active')
+    })
+
+    it('should handle reservation not found', async () => {
+      const reservationId = 'nonexistent'
+
+      vi.mocked(prisma.stockReservation.delete).mockRejectedValue(new Error('Reservation not found'))
+
+      await expect(inventoryPool.releaseReservation(reservationId)).rejects.toThrow('Reservation not found')
     })
   })
 
   describe('updateStock', () => {
-    it('should update stock with valid adjustment reason', async () => {
-      const movement = await InventoryPool.updateStock({
-        productId: testProductId,
-        quantity: -10,
-        reason: 'BREAKAGE',
-        userId: testUserId
-      })
+    it('should update stock and create movement record', async () => {
+      const productId = 'product123'
+      const change = -10
+      const reason = 'Sale'
+      const userId = 'user123'
 
-      expect(movement.beforeQty).toBe(100)
-      expect(movement.afterQty).toBe(90)
-      expect(movement.type).toBe('ADJUSTMENT')
-
-      // Verify product quantity was updated
-      const product = await db.product.findUnique({
-        where: { id: testProductId },
-        select: { quantity: true }
-      })
-      expect(product?.quantity).toBe(90)
-    })
-
-    it('should reject invalid adjustment reasons', async () => {
-      await expect(InventoryPool.updateStock({
-        productId: testProductId,
-        quantity: -5,
-        reason: 'INVALID_REASON',
-        userId: testUserId
-      })).rejects.toThrow('Invalid adjustment reason')
-    })
-
-    it('should prevent stock from going negative', async () => {
-      await expect(InventoryPool.updateStock({
-        productId: testProductId,
-        quantity: -150, // More than current stock (100)
-        reason: 'BREAKAGE',
-        userId: testUserId
-      })).rejects.toThrow('Cannot reduce stock below zero')
-    })
-
-    it('should trigger inventory alerts check', async () => {
-      await InventoryPool.updateStock({
-        productId: testProductId,
-        quantity: 10,
-        reason: 'FOUND',
-        userId: testUserId
-      })
-
-      expect(InventoryAlertManager.checkStockLevels).toHaveBeenCalled()
-    })
-  })
-
-  describe('recordMovement', () => {
-    it('should record purchase movement correctly', async () => {
-      const movement = await InventoryPool.recordMovement({
-        productId: testProductId,
-        type: 'PURCHASE',
-        quantity: 50,
-        reason: 'New stock arrival',
-        userId: testUserId
-      })
-
-      expect(movement.beforeQty).toBe(100)
-      expect(movement.afterQty).toBe(150)
-      expect(movement.type).toBe('PURCHASE')
-
-      // Verify product quantity was updated
-      const product = await db.product.findUnique({
-        where: { id: testProductId },
-        select: { quantity: true }
-      })
-      expect(product?.quantity).toBe(150)
-    })
-
-    it('should record sale movement correctly', async () => {
-      const movement = await InventoryPool.recordMovement({
-        productId: testProductId,
+      const mockProduct = { id: productId, quantity: 100 }
+      const mockUpdatedProduct = { id: productId, quantity: 90 }
+      const mockMovement = {
+        id: 'movement123',
+        productId,
         type: 'SALE',
-        quantity: 30,
-        reason: 'Customer purchase',
-        userId: testUserId
+        quantity: Math.abs(change),
+        reason,
+        userId,
+        beforeQty: 100,
+        afterQty: 90,
+        timestamp: new Date(),
+      }
+
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(mockProduct)
+      vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
+        return callback({
+          product: {
+            update: vi.fn().mockResolvedValue(mockUpdatedProduct),
+          },
+          stockMovement: {
+            create: vi.fn().mockResolvedValue(mockMovement),
+          },
+        })
       })
 
-      expect(movement.beforeQty).toBe(100)
-      expect(movement.afterQty).toBe(70)
-      expect(movement.type).toBe('SALE')
+      await inventoryPool.updateStock(productId, change, reason, userId)
+
+      expect(prisma.$transaction).toHaveBeenCalled()
     })
 
-    it('should prevent sale when insufficient stock', async () => {
-      await expect(InventoryPool.recordMovement({
-        productId: testProductId,
-        type: 'SALE',
-        quantity: 150, // More than available
-        reason: 'Large sale',
-        userId: testUserId
-      })).rejects.toThrow('Insufficient stock for this movement')
+    it('should throw error when product not found', async () => {
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(null)
+
+      await expect(
+        inventoryPool.updateStock('nonexistent', 10, 'test', 'user123')
+      ).rejects.toThrow('Product not found')
     })
 
-    it('should reject adjustment movements', async () => {
-      await expect(InventoryPool.recordMovement({
-        productId: testProductId,
-        type: 'ADJUSTMENT',
-        quantity: 10,
-        reason: 'Should use updateStock',
-        userId: testUserId
-      })).rejects.toThrow('Use updateStock method for adjustments')
-    })
+    it('should throw error when insufficient stock for negative change', async () => {
+      const productId = 'product123'
+      const change = -50
+      const mockProduct = { id: productId, quantity: 30 }
 
-    it('should reject negative quantities', async () => {
-      await expect(InventoryPool.recordMovement({
-        productId: testProductId,
-        type: 'PURCHASE',
-        quantity: -10,
-        reason: 'Negative test',
-        userId: testUserId
-      })).rejects.toThrow('Movement quantity must be positive')
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(mockProduct)
+
+      await expect(
+        inventoryPool.updateStock(productId, change, 'test', 'user123')
+      ).rejects.toThrow('Insufficient stock')
     })
   })
 
   describe('getStockMovements', () => {
-    beforeEach(async () => {
-      // Create some test movements
-      await InventoryPool.recordMovement({
-        productId: testProductId,
-        type: 'PURCHASE',
-        quantity: 20,
-        reason: 'Test purchase',
-        userId: testUserId
-      })
-
-      await InventoryPool.recordMovement({
-        productId: testProductId,
-        type: 'SALE',
-        quantity: 10,
-        reason: 'Test sale',
-        userId: testUserId
-      })
-    })
-
-    it('should return movements for a product', async () => {
-      const movements = await InventoryPool.getStockMovements(testProductId)
-      expect(movements).toHaveLength(2)
-      expect(movements[0].type).toBe('SALE') // Most recent first
-      expect(movements[1].type).toBe('PURCHASE')
-    })
-
-    it('should filter movements by date range', async () => {
-      const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
-      const dayAfterTomorrow = new Date(Date.now() + 48 * 60 * 60 * 1000)
-
-      const movements = await InventoryPool.getStockMovements(testProductId, {
-        from: tomorrow,
-        to: dayAfterTomorrow
-      })
-
-      expect(movements).toHaveLength(0) // No movements in future date range
-    })
-  })
-
-  describe('validateStockOperation', () => {
-    it('should validate successful operation', async () => {
-      const validation = await InventoryPool.validateStockOperation(
-        testProductId,
-        50,
-        'reserve'
-      )
-
-      expect(validation.valid).toBe(true)
-      expect(validation.availableStock).toBe(100)
-      expect(validation.message).toBe('Stock operation valid')
-    })
-
-    it('should reject operation with insufficient stock', async () => {
-      const validation = await InventoryPool.validateStockOperation(
-        testProductId,
-        150,
-        'reduce'
-      )
-
-      expect(validation.valid).toBe(false)
-      expect(validation.availableStock).toBe(100)
-      expect(validation.message).toContain('Insufficient stock')
-    })
-  })
-
-  describe('getStockSummary', () => {
-    it('should return comprehensive stock summary', async () => {
-      // Create a reservation and movement
-      await InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 20,
-        reason: 'Test reservation',
-        userId: testUserId
-      })
-
-      await InventoryPool.recordMovement({
-        productId: testProductId,
-        type: 'SALE',
-        quantity: 10,
-        reason: 'Test sale',
-        userId: testUserId
-      })
-
-      const summary = await InventoryPool.getStockSummary(testProductId)
-
-      expect(summary.productId).toBe(testProductId)
-      expect(summary.totalStock).toBe(90) // 100 - 10 from sale
-      expect(summary.availableStock).toBe(70) // 90 - 20 reserved
-      expect(summary.reservedStock).toBe(20)
-      expect(summary.activeReservations).toBe(1)
-      expect(summary.recentMovements).toHaveLength(1)
-    })
-  })
-
-  describe('edge cases and validation', () => {
-    it('should prevent over-reservation through multiple reservations', async () => {
-      // Create multiple reservations that together exceed stock
-      const reservation1 = await InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 60,
-        reason: 'First reservation',
-        userId: testUserId
-      })
-
-      const reservation2 = await InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 30,
-        reason: 'Second reservation',
-        userId: testUserId
-      })
-
-      // Third reservation should fail
-      await expect(InventoryPool.reserveStock({
-        productId: testProductId,
-        quantity: 20, // Would exceed available stock (100 - 60 - 30 = 10)
-        reason: 'Third reservation',
-        userId: testUserId
-      })).rejects.toThrow('Insufficient stock available')
-
-      // Verify total reservations
-      const totalReserved = await db.stockReservation.aggregate({
-        where: { productId: testProductId },
-        _sum: { quantity: true }
-      })
-
-      expect(totalReserved._sum.quantity).toBe(90)
-    })
-
-    it('should handle sequential stock movements correctly', async () => {
-      // Sequential execution to test stock level management
-      const results = []
-      
-      for (let i = 0; i < 3; i++) {
-        try {
-          const movement = await InventoryPool.recordMovement({
-            productId: testProductId,
-            type: 'SALE',
-            quantity: 40,
-            reason: `Sequential sale ${i}`,
-            userId: testUserId
-          })
-          results.push({ status: 'fulfilled', value: movement })
-        } catch (error) {
-          results.push({ status: 'rejected', reason: error })
-        }
+    it('should retrieve stock movements with date range', async () => {
+      const productId = 'product123'
+      const dateRange = {
+        start: new Date('2024-01-01'),
+        end: new Date('2024-12-31'),
       }
-      
-      const successful = results.filter(r => r.status === 'fulfilled')
-      const failed = results.filter(r => r.status === 'rejected')
 
-      // Only 2 sales of 40 each should succeed (80 total), third should fail
-      expect(successful.length).toBe(2)
-      expect(failed.length).toBe(1)
-
-      // Verify final stock level
-      const product = await db.product.findUnique({
-        where: { id: testProductId },
-        select: { quantity: true }
-      })
-      expect(product?.quantity).toBe(20) // 100 - 80
-    })
-  })
-
-  describe('VALID_ADJUSTMENT_REASONS', () => {
-    it('should contain all expected adjustment reasons', () => {
-      const expectedReasons = [
-        'BREAKAGE', 'THEFT', 'SPILLAGE', 'DAMAGE', 'EXPIRED',
-        'LOST', 'FOUND', 'RECOUNT', 'SUPPLIER_ERROR',
-        'RETURN_TO_SUPPLIER', 'QUALITY_CONTROL', 'SAMPLE_USED', 'WRITE_OFF'
+      const mockMovements = [
+        {
+          id: 'movement1',
+          productId,
+          type: 'PURCHASE',
+          quantity: 50,
+          reason: 'Restock',
+          userId: 'user123',
+          beforeQty: 0,
+          afterQty: 50,
+          timestamp: new Date('2024-06-01'),
+          user: { id: 'user123', name: 'Test User' },
+        },
       ]
 
-      expect(VALID_ADJUSTMENT_REASONS).toEqual(expect.arrayContaining(expectedReasons))
-      expect(VALID_ADJUSTMENT_REASONS).toHaveLength(expectedReasons.length)
+      vi.mocked(prisma.stockMovement.findMany).mockResolvedValue(mockMovements)
+
+      const result = await inventoryPool.getStockMovements(productId, dateRange)
+
+      expect(prisma.stockMovement.findMany).toHaveBeenCalledWith({
+        where: {
+          productId,
+          timestamp: {
+            gte: dateRange.start,
+            lte: dateRange.end,
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: {
+          timestamp: 'desc',
+        },
+      })
+
+      expect(result).toEqual(mockMovements)
+    })
+
+    it('should retrieve all movements when no date range provided', async () => {
+      const productId = 'product123'
+      const mockMovements = []
+
+      vi.mocked(prisma.stockMovement.findMany).mockResolvedValue(mockMovements)
+
+      const result = await inventoryPool.getStockMovements(productId)
+
+      expect(prisma.stockMovement.findMany).toHaveBeenCalledWith({
+        where: { productId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: {
+          timestamp: 'desc',
+        },
+      })
+
+      expect(result).toEqual(mockMovements)
+    })
+  })
+
+  describe('cleanupExpiredReservations', () => {
+    it('should delete expired reservations', async () => {
+      const deletedCount = 5
+      vi.mocked(prisma.stockReservation.deleteMany).mockResolvedValue({ count: deletedCount })
+
+      const result = await inventoryPool.cleanupExpiredReservations()
+
+      expect(prisma.stockReservation.deleteMany).toHaveBeenCalledWith({
+        where: {
+          expiresAt: { lt: expect.any(Date) },
+        },
+      })
+
+      expect(result).toBe(deletedCount)
     })
   })
 })

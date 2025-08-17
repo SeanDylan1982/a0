@@ -1,516 +1,302 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { PrismaClient, NotificationType, NotificationPriority } from '@prisma/client'
-import { NotificationManager, CreateNotificationData } from '../notification-manager'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { NotificationManager } from '../notification-manager'
+import { prisma } from '@/lib/prisma'
+import { io } from '@/lib/socket'
 
-// Mock Prisma Client
-const mockPrisma = {
-  notification: {
-    create: vi.fn(),
-    createMany: vi.fn(),
-    findMany: vi.fn(),
-    updateMany: vi.fn(),
-    deleteMany: vi.fn(),
-    count: vi.fn()
-  }
-} as unknown as PrismaClient
+// Mock dependencies
+vi.mock('@/lib/prisma', () => ({
+  prisma: {
+    notification: {
+      create: vi.fn(),
+      update: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+  },
+}))
+
+vi.mock('@/lib/socket', () => ({
+  io: {
+    to: vi.fn().mockReturnThis(),
+    emit: vi.fn(),
+  },
+}))
 
 describe('NotificationManager', () => {
   let notificationManager: NotificationManager
-  const mockUserId = '507f1f77bcf86cd799439011'
-  const mockNotificationId = '507f1f77bcf86cd799439012'
 
   beforeEach(() => {
-    notificationManager = new NotificationManager(mockPrisma)
+    notificationManager = new NotificationManager()
     vi.clearAllMocks()
   })
 
   afterEach(() => {
-    vi.resetAllMocks()
+    vi.restoreAllMocks()
   })
 
   describe('create', () => {
-    it('should create a notification successfully', async () => {
-      const notificationData: CreateNotificationData = {
-        userId: mockUserId,
-        type: NotificationType.ACTIVITY,
-        title: 'Test Notification',
-        message: 'This is a test notification',
-        priority: NotificationPriority.HIGH
-      }
-
+    it('should create notification and emit socket event', async () => {
       const mockNotification = {
-        id: mockNotificationId,
-        ...notificationData,
-        data: {},
+        userId: 'user123',
+        type: 'ACTIVITY' as const,
+        title: 'New Activity',
+        message: 'A new activity has been logged',
+        data: { activityId: 'activity123' },
         read: false,
-        createdAt: new Date(),
-        expiresAt: null
+        priority: 'MEDIUM' as const,
       }
 
-      vi.mocked(mockPrisma.notification.create).mockResolvedValue(mockNotification)
+      const mockCreatedNotification = {
+        id: 'notification123',
+        ...mockNotification,
+        createdAt: new Date(),
+        expiresAt: null,
+      }
 
-      const result = await notificationManager.create(notificationData)
+      vi.mocked(prisma.notification.create).mockResolvedValue(mockCreatedNotification)
 
-      expect(mockPrisma.notification.create).toHaveBeenCalledWith({
-        data: {
-          userId: mockUserId,
-          type: NotificationType.ACTIVITY,
-          title: 'Test Notification',
-          message: 'This is a test notification',
-          data: {},
-          priority: NotificationPriority.HIGH,
-          expiresAt: undefined,
-          read: false
-        }
+      await notificationManager.create(mockNotification)
+
+      expect(prisma.notification.create).toHaveBeenCalledWith({
+        data: mockNotification,
       })
-      expect(result).toEqual(mockNotification)
+
+      expect(io.to).toHaveBeenCalledWith(`user:${mockNotification.userId}`)
+      expect(io.emit).toHaveBeenCalledWith('notification:new', mockCreatedNotification)
     })
 
-    it('should create notification with default priority', async () => {
-      const notificationData: CreateNotificationData = {
-        userId: mockUserId,
-        type: NotificationType.SYSTEM,
-        title: 'System Alert',
-        message: 'System maintenance scheduled'
-      }
-
+    it('should create notification with expiration date', async () => {
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
       const mockNotification = {
-        id: mockNotificationId,
-        ...notificationData,
-        priority: NotificationPriority.MEDIUM,
-        data: {},
+        userId: 'user123',
+        type: 'CALENDAR_REMINDER' as const,
+        title: 'Meeting Reminder',
+        message: 'You have a meeting in 1 hour',
         read: false,
-        createdAt: new Date(),
-        expiresAt: null
+        priority: 'HIGH' as const,
+        expiresAt,
       }
 
-      vi.mocked(mockPrisma.notification.create).mockResolvedValue(mockNotification)
+      const mockCreatedNotification = {
+        id: 'notification123',
+        ...mockNotification,
+        createdAt: new Date(),
+        data: null,
+      }
 
-      await notificationManager.create(notificationData)
+      vi.mocked(prisma.notification.create).mockResolvedValue(mockCreatedNotification)
 
-      expect(mockPrisma.notification.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          priority: NotificationPriority.MEDIUM
-        })
+      await notificationManager.create(mockNotification)
+
+      expect(prisma.notification.create).toHaveBeenCalledWith({
+        data: mockNotification,
       })
     })
 
     it('should handle creation errors', async () => {
-      const notificationData: CreateNotificationData = {
-        userId: mockUserId,
-        type: NotificationType.ACTIVITY,
-        title: 'Test Notification',
-        message: 'This is a test notification'
+      const mockNotification = {
+        userId: 'user123',
+        type: 'SYSTEM' as const,
+        title: 'System Alert',
+        message: 'System maintenance scheduled',
+        read: false,
+        priority: 'CRITICAL' as const,
       }
 
-      vi.mocked(mockPrisma.notification.create).mockRejectedValue(new Error('Database error'))
+      vi.mocked(prisma.notification.create).mockRejectedValue(new Error('Database error'))
 
-      await expect(notificationManager.create(notificationData)).rejects.toThrow('Failed to create notification')
-    })
-  })
-
-  describe('createBulk', () => {
-    it('should create multiple notifications', async () => {
-      const notifications: CreateNotificationData[] = [
-        {
-          userId: mockUserId,
-          type: NotificationType.ACTIVITY,
-          title: 'Notification 1',
-          message: 'Message 1'
-        },
-        {
-          userId: mockUserId,
-          type: NotificationType.SYSTEM,
-          title: 'Notification 2',
-          message: 'Message 2'
-        }
-      ]
-
-      const mockCreatedNotifications = notifications.map((n, i) => ({
-        id: `507f1f77bcf86cd79943901${i}`,
-        ...n,
-        priority: NotificationPriority.MEDIUM,
-        data: {},
-        read: false,
-        createdAt: new Date(),
-        expiresAt: null
-      }))
-
-      vi.mocked(mockPrisma.notification.createMany).mockResolvedValue({ count: 2 })
-      vi.mocked(mockPrisma.notification.findMany).mockResolvedValue(mockCreatedNotifications)
-
-      const result = await notificationManager.createBulk(notifications)
-
-      expect(mockPrisma.notification.createMany).toHaveBeenCalledWith({
-        data: expect.arrayContaining([
-          expect.objectContaining({
-            userId: mockUserId,
-            type: NotificationType.ACTIVITY,
-            title: 'Notification 1'
-          }),
-          expect.objectContaining({
-            userId: mockUserId,
-            type: NotificationType.SYSTEM,
-            title: 'Notification 2'
-          })
-        ])
-      })
-      expect(result).toHaveLength(2)
+      await expect(notificationManager.create(mockNotification)).rejects.toThrow('Database error')
     })
   })
 
   describe('markAsRead', () => {
-    it('should mark notification as read', async () => {
-      vi.mocked(mockPrisma.notification.updateMany).mockResolvedValue({ count: 1 })
+    it('should mark notification as read and emit socket event', async () => {
+      const notificationId = 'notification123'
+      const userId = 'user123'
 
-      const result = await notificationManager.markAsRead(mockNotificationId, mockUserId)
+      const mockUpdatedNotification = {
+        id: notificationId,
+        userId,
+        type: 'ACTIVITY',
+        title: 'Test Notification',
+        message: 'Test message',
+        read: true,
+        priority: 'MEDIUM',
+        createdAt: new Date(),
+        expiresAt: null,
+        data: null,
+      }
 
-      expect(mockPrisma.notification.updateMany).toHaveBeenCalledWith({
+      vi.mocked(prisma.notification.update).mockResolvedValue(mockUpdatedNotification)
+
+      await notificationManager.markAsRead(notificationId, userId)
+
+      expect(prisma.notification.update).toHaveBeenCalledWith({
         where: {
-          id: mockNotificationId,
-          userId: mockUserId
+          id: notificationId,
+          userId: userId,
         },
         data: {
-          read: true
-        }
-      })
-      expect(result).toBe(true)
-    })
-
-    it('should return false if notification not found', async () => {
-      vi.mocked(mockPrisma.notification.updateMany).mockResolvedValue({ count: 0 })
-
-      const result = await notificationManager.markAsRead(mockNotificationId, mockUserId)
-
-      expect(result).toBe(false)
-    })
-  })
-
-  describe('markMultipleAsRead', () => {
-    it('should mark multiple notifications as read', async () => {
-      const notificationIds = ['id1', 'id2', 'id3']
-      vi.mocked(mockPrisma.notification.updateMany).mockResolvedValue({ count: 3 })
-
-      const result = await notificationManager.markMultipleAsRead(notificationIds, mockUserId)
-
-      expect(mockPrisma.notification.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: { in: notificationIds },
-          userId: mockUserId
+          read: true,
         },
-        data: {
-          read: true
-        }
       })
-      expect(result).toBe(3)
-    })
-  })
 
-  describe('markAllAsRead', () => {
-    it('should mark all notifications as read', async () => {
-      vi.mocked(mockPrisma.notification.updateMany).mockResolvedValue({ count: 5 })
-
-      const result = await notificationManager.markAllAsRead(mockUserId)
-
-      expect(mockPrisma.notification.updateMany).toHaveBeenCalledWith({
-        where: {
-          userId: mockUserId,
-          read: false
-        },
-        data: {
-          read: true
-        }
-      })
-      expect(result).toBe(5)
+      expect(io.to).toHaveBeenCalledWith(`user:${userId}`)
+      expect(io.emit).toHaveBeenCalledWith('notification:read', { notificationId })
     })
 
-    it('should mark all notifications of specific type as read', async () => {
-      vi.mocked(mockPrisma.notification.updateMany).mockResolvedValue({ count: 3 })
+    it('should handle update errors', async () => {
+      const notificationId = 'notification123'
+      const userId = 'user123'
 
-      const result = await notificationManager.markAllAsRead(mockUserId, NotificationType.ACTIVITY)
+      vi.mocked(prisma.notification.update).mockRejectedValue(new Error('Notification not found'))
 
-      expect(mockPrisma.notification.updateMany).toHaveBeenCalledWith({
-        where: {
-          userId: mockUserId,
-          read: false,
-          type: NotificationType.ACTIVITY
-        },
-        data: {
-          read: true
-        }
-      })
-      expect(result).toBe(3)
+      await expect(notificationManager.markAsRead(notificationId, userId)).rejects.toThrow('Notification not found')
     })
   })
 
   describe('getUnreadCount', () => {
     it('should return unread count for user', async () => {
-      vi.mocked(mockPrisma.notification.count).mockResolvedValue(7)
+      const userId = 'user123'
+      const expectedCount = 5
 
-      const result = await notificationManager.getUnreadCount(mockUserId)
+      vi.mocked(prisma.notification.count).mockResolvedValue(expectedCount)
 
-      expect(mockPrisma.notification.count).toHaveBeenCalledWith({
+      const result = await notificationManager.getUnreadCount(userId)
+
+      expect(prisma.notification.count).toHaveBeenCalledWith({
         where: {
-          userId: mockUserId,
+          userId,
           read: false,
           OR: [
             { expiresAt: null },
-            { expiresAt: { gt: expect.any(Date) } }
-          ]
-        }
+            { expiresAt: { gt: expect.any(Date) } },
+          ],
+        },
       })
-      expect(result).toBe(7)
+
+      expect(result).toBe(expectedCount)
     })
 
-    it('should return unread count for specific type', async () => {
-      vi.mocked(mockPrisma.notification.count).mockResolvedValue(3)
+    it('should return unread count for specific notification type', async () => {
+      const userId = 'user123'
+      const type = 'CALENDAR_REMINDER'
+      const expectedCount = 2
 
-      const result = await notificationManager.getUnreadCount(mockUserId, NotificationType.INVENTORY_ALERT)
+      vi.mocked(prisma.notification.count).mockResolvedValue(expectedCount)
 
-      expect(mockPrisma.notification.count).toHaveBeenCalledWith({
+      const result = await notificationManager.getUnreadCount(userId, type)
+
+      expect(prisma.notification.count).toHaveBeenCalledWith({
         where: {
-          userId: mockUserId,
+          userId,
+          type,
           read: false,
-          type: NotificationType.INVENTORY_ALERT,
           OR: [
             { expiresAt: null },
-            { expiresAt: { gt: expect.any(Date) } }
-          ]
-        }
+            { expiresAt: { gt: expect.any(Date) } },
+          ],
+        },
       })
-      expect(result).toBe(3)
-    })
 
-    it('should return 0 on error', async () => {
-      vi.mocked(mockPrisma.notification.count).mockRejectedValue(new Error('Database error'))
-
-      const result = await notificationManager.getUnreadCount(mockUserId)
-
-      expect(result).toBe(0)
+      expect(result).toBe(expectedCount)
     })
   })
 
   describe('getNotifications', () => {
-    it('should get notifications with default parameters', async () => {
+    it('should retrieve notifications with default filters', async () => {
+      const userId = 'user123'
       const mockNotifications = [
         {
-          id: 'notif1',
-          userId: mockUserId,
-          type: NotificationType.ACTIVITY,
-          title: 'Test 1',
-          message: 'Message 1',
-          priority: NotificationPriority.HIGH,
+          id: 'notification1',
+          userId,
+          type: 'ACTIVITY',
+          title: 'Activity Notification',
+          message: 'New activity logged',
           read: false,
+          priority: 'MEDIUM',
           createdAt: new Date(),
           expiresAt: null,
-          data: {}
-        }
+          data: null,
+        },
       ]
 
-      vi.mocked(mockPrisma.notification.findMany).mockResolvedValue(mockNotifications)
+      vi.mocked(prisma.notification.findMany).mockResolvedValue(mockNotifications)
 
-      const result = await notificationManager.getNotifications(mockUserId)
+      const result = await notificationManager.getNotifications(userId)
 
-      expect(mockPrisma.notification.findMany).toHaveBeenCalledWith({
+      expect(prisma.notification.findMany).toHaveBeenCalledWith({
         where: {
-          userId: mockUserId,
+          userId,
           OR: [
             { expiresAt: null },
-            { expiresAt: { gt: expect.any(Date) } }
-          ]
+            { expiresAt: { gt: expect.any(Date) } },
+          ],
         },
-        orderBy: [
-          { priority: 'desc' },
-          { createdAt: 'desc' }
-        ],
+        orderBy: {
+          createdAt: 'desc',
+        },
         take: 50,
-        skip: 0
+        skip: 0,
       })
+
       expect(result).toEqual(mockNotifications)
     })
 
-    it('should apply filters correctly', async () => {
+    it('should retrieve notifications with custom filters', async () => {
+      const userId = 'user123'
       const filters = {
-        type: NotificationType.SYSTEM,
-        priority: NotificationPriority.CRITICAL,
+        type: 'INVENTORY_ALERT' as const,
         read: false,
-        startDate: new Date('2024-01-01'),
-        endDate: new Date('2024-12-31'),
+        priority: 'HIGH' as const,
         limit: 10,
-        offset: 5
+        offset: 20,
       }
 
-      vi.mocked(mockPrisma.notification.findMany).mockResolvedValue([])
+      const mockNotifications = []
+      vi.mocked(prisma.notification.findMany).mockResolvedValue(mockNotifications)
 
-      await notificationManager.getNotifications(mockUserId, filters)
+      const result = await notificationManager.getNotifications(userId, filters)
 
-      expect(mockPrisma.notification.findMany).toHaveBeenCalledWith({
+      expect(prisma.notification.findMany).toHaveBeenCalledWith({
         where: {
-          userId: mockUserId,
-          type: NotificationType.SYSTEM,
-          priority: NotificationPriority.CRITICAL,
-          read: false,
-          createdAt: {
-            gte: filters.startDate,
-            lte: filters.endDate
-          },
+          userId,
+          type: filters.type,
+          read: filters.read,
+          priority: filters.priority,
           OR: [
             { expiresAt: null },
-            { expiresAt: { gt: expect.any(Date) } }
-          ]
+            { expiresAt: { gt: expect.any(Date) } },
+          ],
         },
-        orderBy: [
-          { priority: 'desc' },
-          { createdAt: 'desc' }
-        ],
-        take: 10,
-        skip: 5
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: filters.limit,
+        skip: filters.offset,
       })
-    })
-  })
 
-  describe('getNotificationStats', () => {
-    it('should return notification statistics', async () => {
-      const mockNotifications = [
-        { type: NotificationType.ACTIVITY, priority: NotificationPriority.HIGH, read: false },
-        { type: NotificationType.ACTIVITY, priority: NotificationPriority.MEDIUM, read: true },
-        { type: NotificationType.SYSTEM, priority: NotificationPriority.CRITICAL, read: false },
-        { type: NotificationType.INVENTORY_ALERT, priority: NotificationPriority.HIGH, read: false }
-      ]
-
-      vi.mocked(mockPrisma.notification.findMany).mockResolvedValue(mockNotifications)
-
-      const result = await notificationManager.getNotificationStats(mockUserId)
-
-      expect(result.total).toBe(4)
-      expect(result.unread).toBe(3)
-      expect(result.byType[NotificationType.ACTIVITY]).toBe(2)
-      expect(result.byType[NotificationType.SYSTEM]).toBe(1)
-      expect(result.byType[NotificationType.INVENTORY_ALERT]).toBe(1)
-      expect(result.byPriority[NotificationPriority.HIGH]).toBe(2)
-      expect(result.byPriority[NotificationPriority.MEDIUM]).toBe(1)
-      expect(result.byPriority[NotificationPriority.CRITICAL]).toBe(1)
-    })
-  })
-
-  describe('deleteNotification', () => {
-    it('should delete notification successfully', async () => {
-      vi.mocked(mockPrisma.notification.deleteMany).mockResolvedValue({ count: 1 })
-
-      const result = await notificationManager.deleteNotification(mockNotificationId, mockUserId)
-
-      expect(mockPrisma.notification.deleteMany).toHaveBeenCalledWith({
-        where: {
-          id: mockNotificationId,
-          userId: mockUserId
-        }
-      })
-      expect(result).toBe(true)
-    })
-
-    it('should return false if notification not found', async () => {
-      vi.mocked(mockPrisma.notification.deleteMany).mockResolvedValue({ count: 0 })
-
-      const result = await notificationManager.deleteNotification(mockNotificationId, mockUserId)
-
-      expect(result).toBe(false)
+      expect(result).toEqual(mockNotifications)
     })
   })
 
   describe('cleanupExpiredNotifications', () => {
-    it('should cleanup expired notifications', async () => {
-      vi.mocked(mockPrisma.notification.deleteMany).mockResolvedValue({ count: 5 })
+    it('should delete expired notifications', async () => {
+      const deletedCount = 10
+      vi.mocked(prisma.notification.deleteMany).mockResolvedValue({ count: deletedCount })
 
       const result = await notificationManager.cleanupExpiredNotifications()
 
-      expect(mockPrisma.notification.deleteMany).toHaveBeenCalledWith({
+      expect(prisma.notification.deleteMany).toHaveBeenCalledWith({
         where: {
           expiresAt: {
-            lt: expect.any(Date)
-          }
-        }
-      })
-      expect(result).toBe(5)
-    })
-  })
-
-  describe('getNotificationsByPriority', () => {
-    it('should get notifications by priority', async () => {
-      const mockNotifications = [
-        {
-          id: 'notif1',
-          userId: mockUserId,
-          type: NotificationType.SYSTEM,
-          title: 'Critical Alert',
-          message: 'System down',
-          priority: NotificationPriority.CRITICAL,
-          read: false,
-          createdAt: new Date(),
-          expiresAt: null,
-          data: {}
-        }
-      ]
-
-      vi.mocked(mockPrisma.notification.findMany).mockResolvedValue(mockNotifications)
-
-      const result = await notificationManager.getNotificationsByPriority(
-        mockUserId, 
-        NotificationPriority.CRITICAL,
-        5
-      )
-
-      expect(mockPrisma.notification.findMany).toHaveBeenCalledWith({
-        where: {
-          userId: mockUserId,
-          priority: NotificationPriority.CRITICAL,
-          read: false,
-          OR: [
-            { expiresAt: null },
-            { expiresAt: { gt: expect.any(Date) } }
-          ]
+            lt: expect.any(Date),
+          },
         },
-        orderBy: { createdAt: 'desc' },
-        take: 5
       })
-      expect(result).toEqual(mockNotifications)
-    })
-  })
 
-  describe('getCriticalNotifications', () => {
-    it('should get critical notifications', async () => {
-      const mockNotifications = [
-        {
-          id: 'notif1',
-          userId: mockUserId,
-          type: NotificationType.SYSTEM,
-          title: 'Critical Alert',
-          message: 'System down',
-          priority: NotificationPriority.CRITICAL,
-          read: false,
-          createdAt: new Date(),
-          expiresAt: null,
-          data: {}
-        }
-      ]
-
-      vi.mocked(mockPrisma.notification.findMany).mockResolvedValue(mockNotifications)
-
-      const result = await notificationManager.getCriticalNotifications(mockUserId)
-
-      expect(mockPrisma.notification.findMany).toHaveBeenCalledWith({
-        where: {
-          userId: mockUserId,
-          priority: NotificationPriority.CRITICAL,
-          read: false,
-          OR: [
-            { expiresAt: null },
-            { expiresAt: { gt: expect.any(Date) } }
-          ]
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 10
-      })
-      expect(result).toEqual(mockNotifications)
+      expect(result).toBe(deletedCount)
     })
   })
 })

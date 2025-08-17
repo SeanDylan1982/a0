@@ -1,0 +1,238 @@
+name: Comprehensive Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  NODE_ENV: test
+  DATABASE_URL: mongodb://localhost:27017/account-zero-test
+  REDIS_URL: redis://localhost:6379/1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ping: 1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7.0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Setup test database
+      run: |
+        npm run db:test:setup
+        npm run db:test:seed
+
+    - name: Run type checking
+      run: npm run type-check
+
+    - name: Run linting
+      run: npm run lint
+
+    - name: Run unit tests
+      run: npm run test:unit
+
+    - name: Run integration tests
+      run: npm run test:integration
+
+    - name: Run security tests
+      run: npm run test:security
+
+    - name: Run load tests
+      run: npm run test:load
+
+    - name: Run E2E tests
+      run: npm run test:e2e
+
+    - name: Generate coverage report
+      run: npm run test:coverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage/coverage-final.json
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: Generate test report
+      run: tsx scripts/run-tests.ts --include-optional
+      if: always()
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.node-version }}
+        path: |
+          test-reports/
+          coverage/
+        retention-days: 30
+
+    - name: Comment PR with test results
+      uses: actions/github-script@v7
+      if: github.event_name == 'pull_request' && always()
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'test-reports/test-results.json';
+          
+          if (fs.existsSync(path)) {
+            const results = JSON.parse(fs.readFileSync(path, 'utf8'));
+            
+            const summary = `
+            ## 🧪 Test Results Summary
+            
+            **Duration:** ${results.totalDuration}ms
+            **Passed:** ${results.summary.passed}/${results.summary.total}
+            **Failed:** ${results.summary.failed}
+            **Required Failed:** ${results.summary.requiredFailed}
+            
+            ### Test Details
+            ${results.results.map(r => 
+              `- ${r.passed ? '✅' : '❌'} **${r.type}** (${r.duration}ms)${r.coverage ? ` - Coverage: ${r.coverage}%` : ''}`
+            ).join('\n')}
+            
+            ${results.summary.requiredFailed === 0 ? '🎉 All required tests passed!' : '💥 Some required tests failed!'}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+          }
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run security audit
+      run: npm audit --audit-level moderate
+
+    - name: Run dependency check
+      uses: actions/dependency-review-action@v4
+      if: github.event_name == 'pull_request'
+
+  performance-benchmark:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+      redis:
+        image: redis:7.0
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Setup test database
+      run: npm run db:test:setup
+
+    - name: Run performance benchmarks
+      run: npm run test:load
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-benchmarks
+        path: test-reports/
+        retention-days: 30
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    needs: [test, security-audit]
+    if: always()
+    
+    steps:
+    - name: Check test results
+      run: |
+        if [[ "${{ needs.test.result }}" != "success" ]]; then
+          echo "❌ Tests failed"
+          exit 1
+        fi
+        
+        if [[ "${{ needs.security-audit.result }}" != "success" ]]; then
+          echo "❌ Security audit failed"
+          exit 1
+        fi
+        
+        echo "✅ All quality gates passed"
+
+    - name: Update status check
+      uses: actions/github-script@v7
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const status = '${{ needs.test.result }}' === 'success' && '${{ needs.security-audit.result }}' === 'success' ? 'success' : 'failure';
+          
+          github.rest.repos.createCommitStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            sha: context.sha,
+            state: status,
+            target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            description: status === 'success' ? 'All quality gates passed' : 'Quality gates failed',
+            context: 'Quality Gate'
+          });
