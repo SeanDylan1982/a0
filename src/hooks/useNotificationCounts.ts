@@ -1,13 +1,13 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { useSocket } from '@/hooks/use-socket'
+import { useState, useEffect, useCallback } from 'react';
+import { useSocket } from '@/hooks/use-socket';
 
 interface NotificationCounts {
-  calendar: number
-  messaging: number
-  noticeBoard: number
-  total: number
+  calendar: number;
+  messaging: number;
+  noticeBoard: number;
+  total: number;
 }
 
 export function useNotificationCounts() {
@@ -15,102 +15,82 @@ export function useNotificationCounts() {
     calendar: 0,
     messaging: 0,
     noticeBoard: 0,
-    total: 0
-  })
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+    total: 0,
+  });
   
-  const socket = useSocket()
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { socket } = useSocket();
 
-  const fetchCounts = async () => {
+  const fetchCounts = useCallback(async () => {
     try {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       
-      // Fetch counts for each notification type
-      const [calendarRes, messagingRes, noticeBoardRes] = await Promise.all([
-        fetch('/api/notifications/count?type=CALENDAR_REMINDER'),
-        fetch('/api/notifications/count?type=MESSAGE'),
-        fetch('/api/notifications/count?type=NOTICE_BOARD')
-      ])
-
-      if (!calendarRes.ok || !messagingRes.ok || !noticeBoardRes.ok) {
-        throw new Error('Failed to fetch notification counts')
+      const response = await fetch('/api/notifications/all-counts');
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch notification counts');
       }
 
-      const [calendarData, messagingData, noticeBoardData] = await Promise.all([
-        calendarRes.json(),
-        messagingRes.json(),
-        noticeBoardRes.json()
-      ])
-
-      const newCounts = {
-        calendar: calendarData.count || 0,
-        messaging: messagingData.count || 0,
-        noticeBoard: noticeBoardData.count || 0,
-        total: (calendarData.count || 0) + (messagingData.count || 0) + (noticeBoardData.count || 0)
-      }
-
-      setCounts(newCounts)
+      const data = await response.json();
+      
+      setCounts({
+        calendar: data.calendar || 0,
+        messaging: data.messaging || 0,
+        noticeBoard: data.noticeBoard || 0,
+        total: data.total || 0,
+      });
     } catch (err) {
-      console.error('Error fetching notification counts:', err)
-      setError(err instanceof Error ? err.message : 'Failed to fetch notification counts')
+      console.error('Error fetching notification counts:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch notification counts');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  }, []);
 
-  // Initial fetch
+  // Handle real-time updates
   useEffect(() => {
-    fetchCounts()
-  }, [])
-
-  // Listen for real-time updates
-  useEffect(() => {
-    if (!socket) return
+    if (!socket) return;
 
     const handleNotificationUpdate = (data: { type: string; count: number }) => {
       setCounts(prev => {
-        const newCounts = { ...prev }
+        const newCounts = { ...prev };
         
         switch (data.type) {
           case 'CALENDAR_REMINDER':
-            newCounts.calendar = data.count
-            break
+            newCounts.calendar = data.count;
+            break;
           case 'MESSAGE':
-            newCounts.messaging = data.count
-            break
+            newCounts.messaging = data.count;
+            break;
           case 'NOTICE_BOARD':
-            newCounts.noticeBoard = data.count
-            break
+            newCounts.noticeBoard = data.count;
+            break;
         }
         
-        newCounts.total = newCounts.calendar + newCounts.messaging + newCounts.noticeBoard
-        return newCounts
-      })
-    }
+        newCounts.total = newCounts.calendar + newCounts.messaging + newCounts.noticeBoard;
+        return newCounts;
+      });
+    };
 
-    const handleNotificationRead = (data: { type: string; count: number }) => {
-      handleNotificationUpdate(data)
-    }
-
-    const handleNewNotification = (data: { type: string }) => {
-      // Refetch counts when new notifications arrive
-      fetchCounts()
-    }
-
-    socket.on('notification:count-update', handleNotificationUpdate)
-    socket.on('notification:read', handleNotificationRead)
-    socket.on('notification:new', handleNewNotification)
+    const cleanupUpdate = socket.on('notification:update', handleNotificationUpdate);
+    const cleanupRead = socket.on('notification:read', handleNotificationUpdate);
+    const cleanupNew = socket.on('notification:new', fetchCounts);
 
     return () => {
-      socket.off('notification:count-update', handleNotificationUpdate)
-      socket.off('notification:read', handleNotificationRead)
-      socket.off('notification:new', handleNewNotification)
-    }
-  }, [socket])
+      cleanupUpdate();
+      cleanupRead();
+      cleanupNew();
+    };
+  }, [socket, fetchCounts]);
 
-  const markAsRead = async (notificationId: string, type: string) => {
+  // Initial fetch
+  useEffect(() => {
+    fetchCounts();
+  }, [fetchCounts]);
+
+  const markAsRead = useCallback(async (notificationId: string, type: string) => {
     try {
       const response = await fetch(`/api/notifications/${notificationId}`, {
         method: 'PATCH',
@@ -118,88 +98,88 @@ export function useNotificationCounts() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ read: true }),
-      })
+      });
 
       if (!response.ok) {
-        throw new Error('Failed to mark notification as read')
+        throw new Error('Failed to mark notification as read');
       }
 
       // Update local counts immediately
       setCounts(prev => {
-        const newCounts = { ...prev }
+        const newCounts = { ...prev };
         
         switch (type) {
           case 'CALENDAR_REMINDER':
-            newCounts.calendar = Math.max(0, newCounts.calendar - 1)
-            break
+            newCounts.calendar = Math.max(0, newCounts.calendar - 1);
+            break;
           case 'MESSAGE':
-            newCounts.messaging = Math.max(0, newCounts.messaging - 1)
-            break
+            newCounts.messaging = Math.max(0, newCounts.messaging - 1);
+            break;
           case 'NOTICE_BOARD':
-            newCounts.noticeBoard = Math.max(0, newCounts.noticeBoard - 1)
-            break
+            newCounts.noticeBoard = Math.max(0, newCounts.noticeBoard - 1);
+            break;
         }
         
-        newCounts.total = newCounts.calendar + newCounts.messaging + newCounts.noticeBoard
-        return newCounts
-      })
+        newCounts.total = newCounts.calendar + newCounts.messaging + newCounts.noticeBoard;
+        return newCounts;
+      });
     } catch (err) {
-      console.error('Error marking notification as read:', err)
+      console.error('Error marking notification as read:', err);
       // Refetch counts on error to ensure consistency
-      fetchCounts()
+      fetchCounts();
     }
-  }
+  }, [fetchCounts]);
 
-  const markAllAsRead = async (type?: string) => {
+  const markAllAsRead = useCallback(async (type?: string) => {
     try {
       const url = type 
         ? `/api/notifications/bulk?action=markRead&type=${type}`
-        : '/api/notifications/bulk?action=markRead'
+        : '/api/notifications/bulk?action=markRead';
       
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-      })
+      });
 
       if (!response.ok) {
-        throw new Error('Failed to mark notifications as read')
+        throw new Error('Failed to mark notifications as read');
       }
 
       if (type) {
         setCounts(prev => {
-          const newCounts = { ...prev }
+          const newCounts = { ...prev };
           
           switch (type) {
             case 'CALENDAR_REMINDER':
-              newCounts.calendar = 0
-              break
+              newCounts.calendar = 0;
+              break;
             case 'MESSAGE':
-              newCounts.messaging = 0
-              break
+              newCounts.messaging = 0;
+              break;
             case 'NOTICE_BOARD':
-              newCounts.noticeBoard = 0
-              break
+              newCounts.noticeBoard = 0;
+              break;
           }
           
-          newCounts.total = newCounts.calendar + newCounts.messaging + newCounts.noticeBoard
-          return newCounts
-        })
+          newCounts.total = newCounts.calendar + newCounts.messaging + newCounts.noticeBoard;
+          return newCounts;
+        });
       } else {
         setCounts({
           calendar: 0,
           messaging: 0,
           noticeBoard: 0,
-          total: 0
-        })
+          total: 0,
+        });
       }
     } catch (err) {
-      console.error('Error marking all notifications as read:', err)
+      console.error('Error marking all notifications as read:', err);
       // Refetch counts on error to ensure consistency
-      fetchCounts()
+      fetchCounts();
     }
-  }
+  }, [fetchCounts]);
 
   return {
     counts,
@@ -207,6 +187,6 @@ export function useNotificationCounts() {
     error,
     refetch: fetchCounts,
     markAsRead,
-    markAllAsRead
-  }
+    markAllAsRead,
+  };
 }

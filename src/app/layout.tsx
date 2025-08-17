@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { LanguageProvider } from "@/contexts/language-context";
 import { SidebarProvider } from "@/contexts/sidebar-context";
 import { InventoryAlerts } from "@/components/inventory-alerts";
+import { TranslationProvider } from "@/contexts/translation-context";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -48,11 +49,13 @@ export default function RootLayout({
         className={`${inter.className} ${mono.variable} antialiased bg-background text-foreground`}
       >
         <LanguageProvider>
-          <SidebarProvider>
-            {children}
-            <InventoryAlerts />
-            <Toaster />
-          </SidebarProvider>
+          <TranslationProvider>
+            <SidebarProvider>
+              {children}
+              <InventoryAlerts />
+              <Toaster />
+            </SidebarProvider>
+          </TranslationProvider>
         </LanguageProvider>
       </body>
     </html>

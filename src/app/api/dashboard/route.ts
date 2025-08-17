@@ -2,10 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { quickMigrate } from '@/lib/middleware/route-migrator'
 import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
 import { DashboardService } from '@/lib/services/dashboard-service'
+import { dbMiddleware } from '@/middleware/db-middleware'
 
 async function handleGET(request: AuthenticatedRequest) {
   try {
     console.log('Dashboard API: Starting enhanced data fetch...')
+    
+    // Ensure database is connected
+    const dbResponse = await dbMiddleware(request)
+    if (dbResponse) return dbResponse
     
     const userId = request.user?.id || 'mock-user-id'
     const dashboardService = new DashboardService()

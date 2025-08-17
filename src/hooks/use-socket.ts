@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 // Mock Socket.IO interfaces for development
 export interface SocketInventoryAlert {
@@ -157,6 +157,7 @@ export function useSocketActivity(userId?: string) {
 export function useSocket(events: string[] = []) {
   const [connected, setConnected] = useState(false)
   const [data, setData] = useState<Record<string, any>>({})
+  const listenersRef = useRef<Record<string, ((...args: any[]) => void)[]>>({})
 
   useEffect(() => {
     // Mock Socket.IO connection for development
@@ -167,6 +168,9 @@ export function useSocket(events: string[] = []) {
     const initialData: Record<string, any> = {}
     events.forEach(event => {
       initialData[event] = []
+      if (!listenersRef.current[event]) {
+        listenersRef.current[event] = []
+      }
     })
     setData(initialData)
 
@@ -175,16 +179,47 @@ export function useSocket(events: string[] = []) {
       console.log('Mock Socket.IO: Disconnecting from events:', events)
       setConnected(false)
     }
-  }, [events])
+  }, [events]) // Removed listeners from dependencies
+
+  const on = useCallback((event: string, callback: (...args: any[]) => void) => {
+    if (!listenersRef.current[event]) {
+      listenersRef.current[event] = [];
+    }
+    listenersRef.current[event].push(callback);
+    
+    // Return cleanup function
+    return () => {
+      listenersRef.current[event] = listenersRef.current[event].filter(cb => cb !== callback);
+    };
+  }, []);
+
+  const off = useCallback((event: string, callback: (...args: any[]) => void) => {
+    if (listenersRef.current[event]) {
+      listenersRef.current[event] = listenersRef.current[event].filter(cb => cb !== callback);
+    }
+  }, []);
 
   const emit = useCallback((event: string, data: any) => {
     console.log('Mock Socket.IO: Emitting event:', event, data)
-    // In production, this would emit to actual socket
+    // Call all listeners for this event
+    if (listenersRef.current[event]) {
+      listenersRef.current[event].forEach(callback => callback(data));
+    }
   }, [])
 
   return {
     connected,
     data,
-    emit
+    emit,
+    on,
+    off,
+    // For backward compatibility, also expose as socket object
+    socket: {
+      connected,
+      on,
+      off,
+      emit,
+      disconnect: () => setConnected(false)
+    }
   }
 }
