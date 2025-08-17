@@ -10,6 +10,7 @@
     "server": "tsx server.ts",
     "seed-database": "tsx scripts/seed-database.ts",
     "seed-products": "tsx scripts/seed-products.ts",
+    "seed-translations": "tsx scripts/seed-translations.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:ui": "vitest --ui"

@@ -65,7 +65,8 @@
   - Write tests for data consistency across module boundaries
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
-- [-] 8. Multi-Language Translation System
+- [x] 8. Multi-Language Translation System
+
 
 
 
