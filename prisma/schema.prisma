@@ -1,0 +1,823 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// User and Authentication Models
+model User {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  email         String   @unique
+  username      String?
+  password      String
+  name          String?
+  avatar        String?
+  role          UserRole @default(USER)
+  status        UserStatus @default(ACTIVE)
+  emailVerified Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  teamMembers   TeamMember[]
+  ledTeams      Team[]   @relation("TeamLeader")
+  sales         Sale[]
+  invoices      Invoice[]
+  quotes        Quote[]
+  creditNotes   CreditNote[]
+  deliveryNotes DeliveryNote[]
+  purchases     Purchase[]
+  inventoryLogs InventoryLog[]
+  notes         Note[]
+  employee      Employee?
+  
+  // New relations for activity tracking
+  activityLogs      ActivityLog[]
+  notifications     Notification[]
+  permissions       UserPermission[]
+  grantedPermissions UserPermission[] @relation("PermissionGrantor")
+  stockReservations StockReservation[]
+  stockMovements    StockMovement[]
+  
+  @@map("users")
+}
+
+enum UserRole {
+  DIRECTOR
+  MANAGER
+  HOD
+  SALES_REP
+  SALES_STAFF
+  INTERNAL_CONSULTANT
+  INVENTORY_MANAGER
+  HR_STAFF
+  ACCOUNTANT
+  STAFF_MEMBER
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+// Team Management
+model Team {
+  id          String @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  leaderId    String @db.ObjectId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  leader      User   @relation("TeamLeader", fields: [leaderId], references: [id])
+  members     TeamMember[]
+  
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String @id @default(auto()) @map("_id") @db.ObjectId
+  userId   String @db.ObjectId
+  teamId   String @db.ObjectId
+  role     String @default("member")
+  joinedAt DateTime @default(now())
+  
+  // Relations
+  user     User   @relation(fields: [userId], references: [id])
+  team     Team   @relation(fields: [teamId], references: [id])
+  
+  @@map("team_members")
+}
+
+// Customer Management
+model Customer {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  firstName     String
+  lastName      String
+  email         String?
+  phone         String?
+  company       String?
+  address       String?
+  city          String?
+  state         String?
+  country       String?
+  postalCode    String?
+  taxId         String?
+  notes         String?
+  status        CustomerStatus @default(ACTIVE)
+  accountType   CustomerAccountType @default(CASH)
+  creditLimit   Float?    @default(0)
+  paymentTerms  Int?      @default(0) // Days
+  balance       Float     @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  sales         Sale[]
+  invoices      Invoice[]
+  quotes        Quote[]
+  creditNotes   CreditNote[]
+  deliveryNotes DeliveryNote[]
+  contacts      CustomerContact[]
+  
+  @@map("customers")
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  PROSPECT
+  LEAD
+}
+
+enum CustomerAccountType {
+  CASH
+  CREDIT
+  NO_ACCOUNT
+}
+
+model CustomerContact {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  customerId String @db.ObjectId
+  name       String
+  email      String?
+  phone      String?
+  position   String?
+  
+  // Relations
+  customer   Customer @relation(fields: [customerId], references: [id])
+  
+  @@map("customer_contacts")
+}
+
+// Inventory Management
+model Product {
+  id            String           @id @default(auto()) @map("_id") @db.ObjectId
+  sku           String           @unique
+  name          String
+  description   String?
+  category      String
+  price         Float
+  cost          Float
+  quantity      Int              @default(0)
+  minStock      Int              @default(0)
+  maxStock      Int              @default(1000)
+  unit          String           @default("pcs")
+  barcode       String?
+  location      String?
+  supplierId    String?          @db.ObjectId
+  status        ProductStatus    @default(ACTIVE)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  
+  // Relations
+  supplier      Supplier?        @relation(fields: [supplierId], references: [id])
+  saleItems     SaleItem[]
+  quoteItems    QuoteItem[]
+  purchaseItems PurchaseItem[]
+  inventoryLogs InventoryLog[]
+  stockReservations StockReservation[]
+  stockMovements StockMovement[]
+  
+  @@map("products")
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  DISCONTINUED
+  OUT_OF_STOCK
+}
+
+model Supplier {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  email       String?
+  phone       String?
+  address     String?
+  city        String?
+  state       String?
+  country     String?
+  postalCode  String?
+  contactPerson String?
+  notes       String?
+  status      SupplierStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  products    Product[]
+  purchases   Purchase[]
+  
+  @@map("suppliers")
+}
+
+enum SupplierStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model InventoryLog {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  productId   String           @db.ObjectId
+  userId      String           @db.ObjectId
+  type        InventoryLogType
+  quantity    Int
+  reason      String?
+  reference   String?
+  createdAt   DateTime         @default(now())
+  
+  // Relations
+  product     Product          @relation(fields: [productId], references: [id])
+  user        User             @relation(fields: [userId], references: [id])
+  
+  @@map("inventory_logs")
+}
+
+enum InventoryLogType {
+  STOCK_IN
+  STOCK_OUT
+  ADJUSTMENT
+  RETURN
+  DAMAGED
+}
+
+// Sales and Invoicing
+model Sale {
+  id          String      @id @default(auto()) @map("_id") @db.ObjectId
+  invoiceId   String?     @db.ObjectId
+  customerId  String      @db.ObjectId
+  userId      String      @db.ObjectId
+  status      SaleStatus  @default(DRAFT)
+  subtotal    Float
+  tax         Float       @default(0)
+  total       Float
+  notes       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  // Relations
+  invoice     Invoice?    @relation(fields: [invoiceId], references: [id])
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  user        User        @relation(fields: [userId], references: [id])
+  items       SaleItem[]
+  
+  @@map("sales")
+}
+
+enum SaleStatus {
+  DRAFT
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+model SaleItem {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  saleId      String   @db.ObjectId
+  productId   String   @db.ObjectId
+  quantity    Int
+  price       Float
+  total       Float
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  sale        Sale     @relation(fields: [saleId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+  
+  @@map("sale_items")
+}
+
+// Document numbering sequence
+model DocumentSequence {
+  id          String @id @default(auto()) @map("_id") @db.ObjectId
+  type        String @unique // INVOICE, QUOTE, CREDIT_NOTE, DELIVERY_NOTE, etc.
+  prefix      String
+  currentNumber Int @default(0)
+  year        Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("document_sequences")
+}
+
+model Quote {
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
+  number      String       @unique
+  customerId  String       @db.ObjectId
+  userId      String       @db.ObjectId
+  status      QuoteStatus  @default(DRAFT)
+  subtotal    Float
+  tax         Float        @default(0)
+  total       Float
+  validUntil  DateTime
+  notes       String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  // Relations
+  customer    Customer     @relation(fields: [customerId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  items       QuoteItem[]
+  
+  @@map("quotes")
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+model QuoteItem {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  quoteId     String   @db.ObjectId
+  productId   String   @db.ObjectId
+  quantity    Int
+  price       Float
+  total       Float
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  quote       Quote    @relation(fields: [quoteId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+  
+  @@map("quote_items")
+}
+
+model Invoice {
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
+  number      String       @unique
+  customerId  String       @db.ObjectId
+  userId      String       @db.ObjectId
+  status      InvoiceStatus @default(DRAFT)
+  subtotal    Float
+  tax         Float        @default(0)
+  total       Float
+  dueDate     DateTime?
+  paidDate    DateTime?
+  notes       String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  // Relations
+  customer    Customer     @relation(fields: [customerId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  sales       Sale[]
+  payments    Payment[]
+  creditNotes CreditNote[]
+  deliveryNotes DeliveryNote[]
+  
+  @@map("invoices")
+}
+
+model CreditNote {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  number      String           @unique
+  invoiceId   String           @db.ObjectId
+  customerId  String           @db.ObjectId
+  userId      String           @db.ObjectId
+  amount      Float
+  reason      String
+  status      CreditNoteStatus @default(DRAFT)
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  
+  // Relations
+  invoice     Invoice          @relation(fields: [invoiceId], references: [id])
+  customer    Customer         @relation(fields: [customerId], references: [id])
+  user        User             @relation(fields: [userId], references: [id])
+  
+  @@map("credit_notes")
+}
+
+enum CreditNoteStatus {
+  DRAFT
+  ISSUED
+  APPLIED
+  CANCELLED
+}
+
+model DeliveryNote {
+  id            String             @id @default(auto()) @map("_id") @db.ObjectId
+  number        String             @unique
+  invoiceId     String             @db.ObjectId
+  customerId    String             @db.ObjectId
+  userId        String             @db.ObjectId
+  status        DeliveryNoteStatus @default(PENDING)
+  deliveryDate  DateTime
+  deliveryAddress String?
+  notes         String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  
+  // Relations
+  invoice       Invoice            @relation(fields: [invoiceId], references: [id])
+  customer      Customer           @relation(fields: [customerId], references: [id])
+  user          User               @relation(fields: [userId], references: [id])
+  
+  @@map("delivery_notes")
+}
+
+enum DeliveryNoteStatus {
+  PENDING
+  DISPATCHED
+  DELIVERED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model Payment {
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
+  invoiceId   String       @db.ObjectId
+  amount      Float
+  method      PaymentMethod
+  reference   String?
+  notes       String?
+  createdAt   DateTime     @default(now())
+  
+  // Relations
+  invoice     Invoice      @relation(fields: [invoiceId], references: [id])
+  
+  @@map("payments")
+}
+
+enum PaymentMethod {
+  CASH
+  CREDIT_CARD
+  BANK_TRANSFER
+  CHECK
+  PAYPAL
+  OTHER
+}
+
+// Purchasing
+model Purchase {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  supplierId  String           @db.ObjectId
+  userId      String           @db.ObjectId
+  status      PurchaseStatus   @default(DRAFT)
+  subtotal    Float
+  tax         Float            @default(0)
+  total       Float
+  orderDate   DateTime?
+  expectedDate DateTime?
+  receivedDate DateTime?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  
+  // Relations
+  supplier    Supplier         @relation(fields: [supplierId], references: [id])
+  user        User             @relation(fields: [userId], references: [id])
+  items       PurchaseItem[]
+  
+  @@map("purchases")
+}
+
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  SHIPPED
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseItem {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  purchaseId  String   @db.ObjectId
+  productId   String   @db.ObjectId
+  quantity    Int
+  price       Float
+  total       Float
+  received    Int      @default(0)
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  purchase    Purchase @relation(fields: [purchaseId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+  
+  @@map("purchase_items")
+}
+
+// Accounting
+model Account {
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
+  code        String       @unique
+  name        String
+  type        AccountType
+  description String?
+  parentId    String?      @db.ObjectId
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  // Relations
+  parent      Account?     @relation("AccountHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children    Account[]    @relation("AccountHierarchy")
+  transactions Transaction[]
+  
+  @@map("accounts")
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+model Transaction {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  number      String           @unique
+  date        DateTime
+  description String
+  type        TransactionType
+  amount      Float
+  accountId   String           @db.ObjectId
+  reference   String?
+  createdAt   DateTime         @default(now())
+  
+  // Relations
+  account     Account          @relation(fields: [accountId], references: [id])
+  
+  @@map("transactions")
+}
+
+enum TransactionType {
+  DEBIT
+  CREDIT
+}
+
+// HR Management
+model Employee {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String         @unique @db.ObjectId
+  employeeId    String         @unique
+  department    String
+  position      String
+  salary        Float
+  hireDate      DateTime
+  terminationDate DateTime?
+  status        EmployeeStatus @default(ACTIVE)
+  emergencyContact String?
+  emergencyPhone String?
+  notes         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  // Relations
+  user          User           @relation(fields: [userId], references: [id])
+  leaveRequests LeaveRequest[]
+  
+  @@map("employees")
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+  SUSPENDED
+}
+
+model LeaveRequest {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  employeeId  String           @db.ObjectId
+  type        LeaveType
+  startDate   DateTime
+  endDate     DateTime
+  reason      String?
+  status      LeaveStatus      @default(PENDING)
+  approvedBy  String?          @db.ObjectId
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  
+  // Relations
+  employee    Employee         @relation(fields: [employeeId], references: [id])
+  
+  @@map("leave_requests")
+}
+
+enum LeaveType {
+  VACATION
+  SICK
+  PERSONAL
+  MATERNITY
+  PATERNITY
+  UNPAID
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// Calendar and Events
+model Event {
+  id          String     @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  type        EventType
+  location    String?
+  attendees   String[]   // Array of user IDs
+  isAllDay    Boolean    @default(false)
+  reminder    DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  @@map("events")
+}
+
+enum EventType {
+  MEETING
+  APPOINTMENT
+  DEADLINE
+  SHIPMENT
+  REMINDER
+  HOLIDAY
+  MAINTENANCE
+}
+
+// Notes and Communications
+model Note {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  title       String
+  content     String
+  type        NoteType @default(GENERAL)
+  isPrivate   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id])
+  
+  @@map("notes")
+}
+
+enum NoteType {
+  GENERAL
+  CUSTOMER
+  PRODUCT
+  SUPPLIER
+  TASK
+  REMINDER
+}
+
+// New enums for global activity tracking
+enum NotificationType {
+  ACTIVITY
+  INVENTORY_ALERT
+  CALENDAR_REMINDER
+  MESSAGE
+  NOTICE_BOARD
+  SYSTEM
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum StockMovementType {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  TRANSFER
+  RETURN
+  DAMAGE
+  THEFT
+  SPILLAGE
+  BREAKAGE
+}
+
+// New models for global activity tracking
+model ActivityLog {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  module      String   // 'inventory', 'sales', 'hr', etc.
+  action      String   // 'create', 'update', 'delete', 'approve', etc.
+  entityType  String   // 'product', 'customer', 'invoice', etc.
+  entityId    String   @db.ObjectId
+  entityName  String   // Human-readable name
+  details     Json     // Additional context data
+  timestamp   DateTime @default(now())
+  ipAddress   String?
+  userAgent   String?
+  
+  user        User     @relation(fields: [userId], references: [id])
+  
+  // Indexes for performance
+  @@index([userId, timestamp])
+  @@index([module, timestamp])
+  @@index([entityType, entityId])
+  @@index([timestamp])
+  @@map("activity_logs")
+}
+
+model Notification {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String           @db.ObjectId
+  type        NotificationType
+  title       String
+  message     String
+  data        Json?
+  read        Boolean          @default(false)
+  priority    NotificationPriority @default(MEDIUM)
+  expiresAt   DateTime?
+  createdAt   DateTime         @default(now())
+  
+  user        User             @relation(fields: [userId], references: [id])
+  
+  @@map("notifications")
+}
+
+model UserPermission {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  module      String
+  action      String
+  resource    String?
+  conditions  Json?
+  grantedBy   String   @db.ObjectId
+  grantedAt   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id])
+  grantor     User     @relation("PermissionGrantor", fields: [grantedBy], references: [id])
+  
+  @@map("user_permissions")
+}
+
+model StockReservation {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  productId   String   @db.ObjectId
+  quantity    Int
+  reason      String
+  userId      String   @db.ObjectId
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  
+  product     Product  @relation(fields: [productId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+  
+  @@map("stock_reservations")
+}
+
+model StockMovement {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  productId   String           @db.ObjectId
+  type        StockMovementType
+  quantity    Int
+  reason      String
+  reference   String?
+  userId      String           @db.ObjectId
+  beforeQty   Int
+  afterQty    Int
+  timestamp   DateTime         @default(now())
+  
+  product     Product          @relation(fields: [productId], references: [id])
+  user        User             @relation(fields: [userId], references: [id])
+  
+  @@map("stock_movements")
+}
+
+model Translation {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  key         String
+  language    String   // 'en', 'af', 'zu'
+  value       String
+  module      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@unique([key, language])
+  @@map("translations")
+}
