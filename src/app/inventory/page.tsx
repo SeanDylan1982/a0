@@ -21,12 +21,18 @@ import {
   TrendingDown,
   Barcode,
   Truck,
-  FileText
+  FileText,
+  Settings,
+  Clock,
+  History
 } from 'lucide-react'
 import { ShareButton } from '@/components/share-button'
 import { TooltipButton } from '@/components/tooltip-button'
 import { useToast } from '@/hooks/use-toast'
 import { PageLayout } from '@/components/page-layout'
+import { StockAdjustmentForm } from '@/components/inventory/stock-adjustment-form'
+import { StockReservationForm } from '@/components/inventory/stock-reservation-form'
+import { StockMovementHistory } from '@/components/inventory/stock-movement-history'
 
 interface Product {
   id: string
@@ -66,12 +72,23 @@ export default function InventoryPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [isAddProductOpen, setIsAddProductOpen] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState('all')
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [isAdjustmentOpen, setIsAdjustmentOpen] = useState(false)
+  const [isReservationOpen, setIsReservationOpen] = useState(false)
+  const [stockSummaries, setStockSummaries] = useState<Record<string, any>>({})
   const { toast } = useToast()
 
   useEffect(() => {
     fetchProducts()
     fetchSuppliers()
   }, [])
+
+  useEffect(() => {
+    // Fetch stock summaries for all products
+    if (products.length > 0) {
+      fetchStockSummaries()
+    }
+  }, [products])
 
   const fetchProducts = async () => {
     try {
@@ -104,6 +121,31 @@ export default function InventoryPage() {
         description: "Failed to fetch suppliers",
         variant: "destructive",
       })
+    }
+  }
+
+  const fetchStockSummaries = async () => {
+    try {
+      const summaries: Record<string, any> = {}
+      
+      // Fetch stock summaries for each product
+      await Promise.all(
+        products.map(async (product) => {
+          try {
+            const response = await fetch(`/api/inventory/pool?productId=${product.id}`)
+            if (response.ok) {
+              const data = await response.json()
+              summaries[product.id] = data.data
+            }
+          } catch (error) {
+            console.error(`Failed to fetch summary for product ${product.id}:`, error)
+          }
+        })
+      )
+      
+      setStockSummaries(summaries)
+    } catch (error) {
+      console.error('Failed to fetch stock summaries:', error)
     }
   }
 
@@ -200,10 +242,38 @@ export default function InventoryPage() {
   }
 
   const getStockStatus = (product: Product) => {
-    if (product.quantity === 0) return { status: 'OUT_OF_STOCK', color: 'destructive', icon: AlertTriangle }
-    if (product.quantity <= product.minStock) return { status: 'LOW_STOCK', color: 'destructive', icon: TrendingDown }
+    const summary = stockSummaries[product.id]
+    const availableStock = summary?.availableStock ?? product.quantity
+    const reservedStock = summary?.reservedStock ?? 0
+    
+    if (availableStock === 0) return { status: 'OUT_OF_STOCK', color: 'destructive', icon: AlertTriangle }
+    if (availableStock <= product.minStock) return { status: 'LOW_STOCK', color: 'destructive', icon: TrendingDown }
     if (product.quantity >= product.maxStock) return { status: 'OVERSTOCK', color: 'secondary', icon: TrendingUp }
+    if (reservedStock > 0) return { status: 'PARTIALLY_RESERVED', color: 'secondary', icon: Clock }
     return { status: 'IN_STOCK', color: 'default', icon: Package }
+  }
+
+  const handleAdjustStock = (product: Product) => {
+    setSelectedProduct(product)
+    setIsAdjustmentOpen(true)
+  }
+
+  const handleReserveStock = (product: Product) => {
+    setSelectedProduct(product)
+    setIsReservationOpen(true)
+  }
+
+  const handleAdjustmentSuccess = () => {
+    setIsAdjustmentOpen(false)
+    setSelectedProduct(null)
+    fetchProducts()
+    fetchStockSummaries()
+  }
+
+  const handleReservationSuccess = () => {
+    setIsReservationOpen(false)
+    setSelectedProduct(null)
+    fetchStockSummaries()
   }
 
   const filteredProducts = products.filter(product => {
@@ -475,11 +545,21 @@ export default function InventoryPage() {
                             <TableCell className="font-mono">{product.sku}</TableCell>
                             <TableCell>{product.category}</TableCell>
                             <TableCell>
-                              <div className="flex items-center space-x-2">
-                                <span className="font-medium">{product.quantity}</span>
-                                <span className="text-sm text-gray-500">{product.unit}</span>
-                                {stockStatus.icon && (
-                                  <stockStatus.icon className="h-4 w-4" />
+                              <div className="space-y-1">
+                                <div className="flex items-center space-x-2">
+                                  <span className="font-medium">{product.quantity}</span>
+                                  <span className="text-sm text-gray-500">{product.unit}</span>
+                                  {stockStatus.icon && (
+                                    <stockStatus.icon className="h-4 w-4" />
+                                  )}
+                                </div>
+                                {stockSummaries[product.id] && (
+                                  <div className="text-xs text-gray-500">
+                                    Available: {stockSummaries[product.id].availableStock}
+                                    {stockSummaries[product.id].reservedStock > 0 && (
+                                      <span className="ml-2">Reserved: {stockSummaries[product.id].reservedStock}</span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </TableCell>
@@ -491,7 +571,23 @@ export default function InventoryPage() {
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              <div className="flex space-x-2">
+                              <div className="flex space-x-1">
+                                <TooltipButton 
+                                  tooltip="Adjust stock levels" 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={() => handleAdjustStock(product)}
+                                >
+                                  <Settings className="h-4 w-4" />
+                                </TooltipButton>
+                                <TooltipButton 
+                                  tooltip="Reserve stock" 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={() => handleReserveStock(product)}
+                                >
+                                  <Clock className="h-4 w-4" />
+                                </TooltipButton>
                                 <ShareButton 
                                   title={product.name}
                                   data={product}
@@ -535,21 +631,7 @@ export default function InventoryPage() {
           </TabsContent>
 
           <TabsContent value="stock-movements" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Stock Movements</CardTitle>
-                <CardDescription>Track inventory changes and movements</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-8">
-                  <p className="text-gray-500 mb-4">Stock movement tracking coming soon!</p>
-                  <Button>
-                    <FileText className="h-4 w-4 mr-2" />
-                    Generate Report
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            <StockMovementHistory showProductInfo={true} />
           </TabsContent>
 
           <TabsContent value="purchase-orders" className="space-y-4">
@@ -570,6 +652,32 @@ export default function InventoryPage() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Stock Adjustment Dialog */}
+        <Dialog open={isAdjustmentOpen} onOpenChange={setIsAdjustmentOpen}>
+          <DialogContent className="max-w-3xl">
+            {selectedProduct && (
+              <StockAdjustmentForm
+                product={selectedProduct}
+                onSuccess={handleAdjustmentSuccess}
+                onCancel={() => setIsAdjustmentOpen(false)}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Stock Reservation Dialog */}
+        <Dialog open={isReservationOpen} onOpenChange={setIsReservationOpen}>
+          <DialogContent className="max-w-3xl">
+            {selectedProduct && (
+              <StockReservationForm
+                product={selectedProduct}
+                onSuccess={handleReservationSuccess}
+                onCancel={() => setIsReservationOpen(false)}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
     </PageLayout>
   )
 }
