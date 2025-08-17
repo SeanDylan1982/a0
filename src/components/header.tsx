@@ -33,6 +33,8 @@ import { NotificationsModal } from '@/components/notifications-modal'
 import { CompactConnectionStatus } from '@/components/connection-status'
 import { ConnectionModal } from '@/components/connection-modal'
 import { InventoryAlertIcon } from '@/components/inventory-alert-icon'
+import { NotificationBadge } from '@/components/notification-badge'
+import { useNotificationCounts } from '@/hooks/useNotificationCounts'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -95,6 +97,7 @@ export function Header({ currentPage, breadcrumbs = [] }: HeaderProps) {
   const { toast } = useToast()
   const { t } = useLanguage()
   const companySettings = useCompanySettings()
+  const { counts } = useNotificationCounts()
 
   const searchResults = [
     { type: 'customer', name: 'ABC Construction Ltd', description: 'Construction company in Cape Town', href: '/customers' },
@@ -150,6 +153,19 @@ export function Header({ currentPage, breadcrumbs = [] }: HeaderProps) {
     }, 1000)
   }
 
+  const getNotificationCount = (href: string): number => {
+    switch (href) {
+      case '/calendar':
+        return counts.calendar
+      case '/messaging':
+        return counts.messaging
+      case '/notice-board':
+        return counts.noticeBoard
+      default:
+        return 0
+    }
+  }
+
   return (
     <>
       {/* Mobile sidebar */}
@@ -163,20 +179,32 @@ export function Header({ currentPage, breadcrumbs = [] }: HeaderProps) {
             </Button>
           </div>
           <nav className="mt-4">
-            {navigation.map((item) => (
-              <button
-                key={item.nameKey}
-                onClick={() => handleNavigation(item)}
-                className={`w-full flex items-center px-4 py-2 text-sm font-medium ${
-                  item.href === currentPage
-                    ? 'bg-blue-50 border-r-4 border-blue-600 text-blue-700'
-                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                }`}
-              >
-                <item.icon className="mr-3 h-5 w-5" />
-                {t(item.nameKey)}
-              </button>
-            ))}
+            {navigation.map((item) => {
+              const notificationCount = getNotificationCount(item.href)
+              
+              return (
+                <button
+                  key={item.nameKey}
+                  onClick={() => handleNavigation(item)}
+                  className={`w-full flex items-center px-4 py-2 text-sm font-medium relative ${
+                    item.href === currentPage
+                      ? 'bg-blue-50 border-r-4 border-blue-600 text-blue-700'
+                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  <div className="relative">
+                    <item.icon className="mr-3 h-5 w-5" />
+                    {notificationCount > 0 && (
+                      <NotificationBadge 
+                        count={notificationCount} 
+                        className="absolute -top-1 -right-1"
+                      />
+                    )}
+                  </div>
+                  {t(item.nameKey)}
+                </button>
+              )
+            })}
           </nav>
         </div>
       </div>
@@ -202,19 +230,39 @@ export function Header({ currentPage, breadcrumbs = [] }: HeaderProps) {
           </div>
           <nav className="flex-1 mt-4">
             {navigation.map((item) => {
+              const notificationCount = getNotificationCount(item.href)
+              
               const NavButton = (
                 <button
                   key={item.nameKey}
                   onClick={() => handleNavigation(item)}
-                  className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'px-4'} py-2 text-sm font-medium transition-all duration-200 ${
+                  className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'px-4'} py-2 text-sm font-medium transition-all duration-200 relative ${
                     item.href === currentPage
                       ? `${getColorForPage(item.href).bg} border-r-4 ${getColorForPage(item.href).border} ${getColorForPage(item.href).text} font-semibold`
                       : `text-gray-600 ${getColorForPage(item.href).hover}`
                   }`}
                 >
-                  <item.icon className={`h-5 w-5 ${sidebarCollapsed ? '' : 'mr-3'}`} />
-                  {!sidebarCollapsed && (
-                    <span className="truncate">{t(item.nameKey)}</span>
+                  {sidebarCollapsed ? (
+                    <div className="relative">
+                      <item.icon className="h-5 w-5" />
+                      {notificationCount > 0 && (
+                        <NotificationBadge 
+                          count={notificationCount} 
+                          className="absolute -top-1 -right-1"
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <item.icon className="h-5 w-5 mr-3" />
+                      <span className="truncate flex-1 text-left">{t(item.nameKey)}</span>
+                      {notificationCount > 0 && (
+                        <NotificationBadge 
+                          count={notificationCount} 
+                          className="relative top-0 right-0"
+                        />
+                      )}
+                    </>
                   )}
                 </button>
               )
@@ -226,7 +274,12 @@ export function Header({ currentPage, breadcrumbs = [] }: HeaderProps) {
                       {NavButton}
                     </TooltipTrigger>
                     <TooltipContent side="right" className="ml-2">
-                      {t(item.nameKey)}
+                      <div className="flex items-center space-x-2">
+                        <span>{t(item.nameKey)}</span>
+                        {notificationCount > 0 && (
+                          <NotificationBadge count={notificationCount} />
+                        )}
+                      </div>
                     </TooltipContent>
                   </Tooltip>
                 )

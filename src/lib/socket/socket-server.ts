@@ -467,6 +467,19 @@ export class SocketBroadcaster {
   }
 
   /**
+   * Broadcast notification count update for specific type
+   */
+  static broadcastNotificationCountUpdate(userId: string, type: NotificationType, count: number) {
+    if (!this.io) return;
+
+    this.io.to(`user:${userId}`).emit('notification:count-update', {
+      type,
+      count,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  /**
    * Broadcast data sync status update
    */
   static broadcastSyncStatus(status: {

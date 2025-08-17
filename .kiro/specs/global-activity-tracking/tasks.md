@@ -85,7 +85,11 @@
   - Write tests for context providers and custom hooks
   - _Requirements: 1.2, 1.5, 6.1, 6.4, 7.1_
 
-- [ ] 10. Sidebar Notification Indicators
+- [x] 10. Sidebar Notification Indicators
+
+
+
+
 
   - Update sidebar components to display notification counters for calendar, messaging, and notice board
   - Implement real-time counter updates using Socket.IO events

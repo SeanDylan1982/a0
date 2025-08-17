@@ -65,6 +65,14 @@ export class NotificationManager {
           data: notification.data as any,
           createdAt: notification.createdAt
         })
+
+        // Broadcast updated count for this notification type
+        const newCount = await this.getUnreadCount(notification.userId, notification.type)
+        SocketBroadcaster.broadcastNotificationCountUpdate(
+          notification.userId, 
+          notification.type, 
+          newCount
+        )
       } catch (socketError) {
         console.warn('Failed to broadcast notification via socket:', socketError)
         // Don't throw error - notification was created successfully
@@ -137,6 +145,15 @@ export class NotificationManager {
    */
   async markAsRead(notificationId: string, userId: string): Promise<boolean> {
     try {
+      // Get the notification type before updating
+      const notification = await this.prisma.notification.findFirst({
+        where: {
+          id: notificationId,
+          userId: userId
+        },
+        select: { type: true }
+      })
+
       const result = await this.prisma.notification.updateMany({
         where: {
           id: notificationId,
@@ -146,6 +163,21 @@ export class NotificationManager {
           read: true
         }
       })
+
+      // Broadcast updated count if notification was found and updated
+      if (result.count > 0 && notification) {
+        try {
+          const { SocketBroadcaster } = await import('@/lib/socket')
+          const newCount = await this.getUnreadCount(userId, notification.type)
+          SocketBroadcaster.broadcastNotificationCountUpdate(
+            userId, 
+            notification.type, 
+            newCount
+          )
+        } catch (socketError) {
+          console.warn('Failed to broadcast count update via socket:', socketError)
+        }
+      }
 
       return result.count > 0
     } catch (error) {
@@ -196,6 +228,31 @@ export class NotificationManager {
           read: true
         }
       })
+
+      // Broadcast updated counts
+      if (result.count > 0) {
+        try {
+          const { SocketBroadcaster } = await import('@/lib/socket')
+          
+          if (type) {
+            // Broadcast count for specific type (should be 0 now)
+            SocketBroadcaster.broadcastNotificationCountUpdate(userId, type, 0)
+          } else {
+            // Broadcast counts for all types
+            const types = Object.values(NotificationType)
+            for (const notificationType of types) {
+              const newCount = await this.getUnreadCount(userId, notificationType)
+              SocketBroadcaster.broadcastNotificationCountUpdate(
+                userId, 
+                notificationType, 
+                newCount
+              )
+            }
+          }
+        } catch (socketError) {
+          console.warn('Failed to broadcast count updates via socket:', socketError)
+        }
+      }
 
       return result.count
     } catch (error) {
