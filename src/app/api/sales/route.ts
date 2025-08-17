@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { triggerSync } from '@/lib/middleware/sync-middleware'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+import { quickMigrate, COMMON_NOTIFICATIONS } from '@/lib/middleware/route-migrator'
+import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: AuthenticatedRequest) {
   try {
-    const sales = await db.sale.findMany({
+    const sales = await prisma.sale.findMany({
       include: {
         customer: {
           select: {
@@ -42,14 +41,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ sales })
   } catch (error) {
     console.error('Get sales error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    throw error // Let middleware handle error translation
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: AuthenticatedRequest) {
   try {
     const { customerId, items, notes } = await request.json()
 
@@ -77,10 +73,10 @@ export async function POST(request: NextRequest) {
     const total = subtotal + tax
 
     // Create sale
-    const sale = await db.sale.create({
+    const sale = await prisma.sale.create({
       data: {
         customerId,
-        userId: 'current-user-id', // In real app, get from session
+        userId: request.user?.id || 'system', // Get from authenticated request
         status: 'DRAFT',
         subtotal,
         tax,
@@ -124,28 +120,6 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    // Trigger sync for inventory and accounting updates
-    try {
-      const session = await getServerSession(authOptions)
-      if (session?.user?.id) {
-        // Trigger sync for each item to update inventory
-        for (const item of sale.items) {
-          await triggerSync('sales', 'sale_created', {
-            entityType: 'sale',
-            entityId: sale.id,
-            productId: item.productId,
-            quantity: item.quantity,
-            saleId: sale.id,
-            customerId: sale.customerId,
-            total: sale.total
-          }, session.user.id)
-        }
-      }
-    } catch (syncError) {
-      console.error('Sync trigger error:', syncError)
-      // Don't fail the sale creation due to sync errors
-    }
-
     return NextResponse.json({
       message: 'Sale created successfully',
       sale
@@ -153,9 +127,18 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Create sale error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    throw error // Let middleware handle error translation
   }
 }
+
+// Apply middleware to handlers with large transaction notifications
+const { GET, POST } = quickMigrate('sales', {
+  GET: handleGET,
+  POST: handlePOST
+}, {
+  notifications: {
+    triggers: [COMMON_NOTIFICATIONS.largeTransaction(10000)]
+  }
+})
+
+export { GET, POST }

@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { quickMigrate } from '@/lib/middleware/route-migrator'
+import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
+import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: AuthenticatedRequest) {
   try {
-    const users = await db.user.findMany({
+    const users = await prisma.user.findMany({
       select: {
         id: true,
         email: true,
@@ -22,26 +24,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ users })
   } catch (error) {
     console.error('Get users error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    throw error // Let middleware handle error translation
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: AuthenticatedRequest) {
   try {
-    const { email, name, role } = await request.json()
-
-    if (!email || !name || !role) {
-      return NextResponse.json(
-        { error: 'Email, name, and role are required' },
-        { status: 400 }
-      )
-    }
+    const { email, name, role, password } = await request.json()
 
     // Check if user already exists
-    const existingUser = await db.user.findUnique({
+    const existingUser = await prisma.user.findUnique({
       where: { email }
     })
 
@@ -52,12 +44,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Generate a temporary password
-    const tempPassword = Math.random().toString(36).slice(-8)
+    // Generate a temporary password if none provided
+    const tempPassword = password || Math.random().toString(36).slice(-8)
     const hashedPassword = await bcrypt.hash(tempPassword, 12)
 
     // Create user
-    const user = await db.user.create({
+    const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
@@ -78,14 +70,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       message: 'User created successfully',
       user,
-      tempPassword // In production, send this via email
+      tempPassword: password ? undefined : tempPassword // Only return temp password if we generated it
     })
 
   } catch (error) {
     console.error('Create user error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    throw error // Let middleware handle error translation
   }
 }
+
+// Apply middleware to handlers
+const { GET, POST } = quickMigrate('admin', {
+  GET: handleGET,
+  POST: handlePOST
+})
+
+export { GET, POST }

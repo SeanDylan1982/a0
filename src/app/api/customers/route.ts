@@ -1,37 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { quickMigrate, COMMON_NOTIFICATIONS } from '@/lib/middleware/route-migrator'
+import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: AuthenticatedRequest) {
   try {
     console.log('Customers API: Starting data fetch...')
     
     // Execute query with prisma client
     const customers = await prisma.customer.findMany({
-        include: {
-          contacts: true,
-          sales: {
-            select: {
-              id: true,
-              status: true,
-              total: true,
-              createdAt: true,
-            }
-          },
-          invoices: {
-            select: {
-              id: true,
-              status: true,
-              total: true,
-              createdAt: true,
-            }
+      include: {
+        contacts: true,
+        sales: {
+          select: {
+            id: true,
+            status: true,
+            total: true,
+            createdAt: true,
           }
         },
-        orderBy: {
-          createdAt: 'desc'
+        invoices: {
+          select: {
+            id: true,
+            status: true,
+            total: true,
+            createdAt: true,
+          }
         }
-      }),
-      'Get Customers Query'
-    )
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    })
 
     console.log('Customers API: Data fetched successfully')
     return NextResponse.json({ customers })
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: AuthenticatedRequest) {
   try {
     console.log('Customers API: Creating new customer...')
     
@@ -97,49 +97,43 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get database client with automatic connection management
-    const db = await getDb()
-    
-    // Create customer with retry logic
-    const customer = await executeWithRetry(() => 
-      db.customer.create({
-        data: {
-          firstName,
-          lastName,
-          email,
-          phone,
-          company,
-          address,
-          city,
-          state,
-          country: country || 'South Africa',
-          postalCode,
-          taxId,
-          notes,
-          status: 'ACTIVE',
+    // Create customer
+    const customer = await prisma.customer.create({
+      data: {
+        firstName,
+        lastName,
+        email,
+        phone,
+        company,
+        address,
+        city,
+        state,
+        country: country || 'South Africa',
+        postalCode,
+        taxId,
+        notes,
+        status: 'ACTIVE',
+      },
+      include: {
+        contacts: true,
+        sales: {
+          select: {
+            id: true,
+            status: true,
+            total: true,
+            createdAt: true,
+          }
         },
-        include: {
-          contacts: true,
-          sales: {
-            select: {
-              id: true,
-              status: true,
-              total: true,
-              createdAt: true,
-            }
-          },
-          invoices: {
-            select: {
-              id: true,
-              status: true,
-              total: true,
-              createdAt: true,
-            }
+        invoices: {
+          select: {
+            id: true,
+            status: true,
+            total: true,
+            createdAt: true,
           }
         }
-      }),
-      'Create Customer Query'
-    )
+      }
+    })
 
     console.log('Customers API: Customer created successfully')
     return NextResponse.json({
@@ -149,15 +143,18 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Create customer error:', error)
-    
-    // Return error with database status
-    return NextResponse.json(
-      { 
-        error: 'Unable to create customer - database connection unavailable',
-        databaseError: true,
-        message: 'Please check your database connection and try again'
-      },
-      { status: 503 } // Service Unavailable
-    )
+    throw error // Let middleware handle error translation
   }
 }
+
+// Apply middleware to handlers
+const { GET, POST } = quickMigrate('customers', {
+  GET: handleGET,
+  POST: handlePOST
+}, {
+  notifications: {
+    triggers: [COMMON_NOTIFICATIONS.newCustomer]
+  }
+})
+
+export { GET, POST }

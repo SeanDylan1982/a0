@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { quickMigrate } from '@/lib/middleware/route-migrator'
+import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
 import { DashboardService } from '@/lib/services/dashboard-service'
 
-// Mock user session for development - replace with actual auth
-function getCurrentUserId(): string {
-  // In production, this would come from the authenticated session
-  return 'mock-user-id'
-}
-
-export async function GET(request: NextRequest) {
+async function handleGET(request: AuthenticatedRequest) {
   try {
     console.log('Dashboard API: Starting enhanced data fetch...')
     
-    const userId = getCurrentUserId()
+    const userId = request.user?.id || 'mock-user-id'
     const dashboardService = new DashboardService()
     
     const dashboardData = await dashboardService.getDashboardData(userId)
@@ -126,4 +122,11 @@ export async function GET(request: NextRequest) {
     })
   }
 }
+
+// Apply middleware to handlers
+const { GET } = quickMigrate('authenticated', {
+  GET: handleGET
+})
+
+export { GET }
 

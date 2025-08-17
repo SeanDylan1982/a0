@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { logInventoryActivity } from '@/lib/utils/activity-utils'
-import { ACTIVITY_ACTIONS } from '@/lib/utils/activity-utils'
-import { extractUserIdFromRequest } from '@/lib/middleware/activity-middleware'
+import { prisma } from '@/lib/prisma'
+import { quickMigrate, COMMON_NOTIFICATIONS } from '@/lib/middleware/route-migrator'
+import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: AuthenticatedRequest) {
   try {
-    const products = await db.product.findMany({
+    const products = await prisma.product.findMany({
       include: {
         supplier: {
           select: {
@@ -24,24 +23,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ products })
   } catch (error) {
     console.error('Get products error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    throw error // Let middleware handle error translation
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: AuthenticatedRequest) {
   try {
-    const userId = extractUserIdFromRequest(request)
-    
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User authentication required' },
-        { status: 401 }
-      )
-    }
-
     const {
       sku,
       name,
@@ -66,7 +53,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if SKU already exists
-    const existingProduct = await db.product.findUnique({
+    const existingProduct = await prisma.product.findUnique({
       where: { sku }
     })
 
@@ -84,7 +71,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Create product
-    const product = await db.product.create({
+    const product = await prisma.product.create({
       data: {
         sku,
         name,
@@ -112,23 +99,6 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    // Log the activity
-    await logInventoryActivity(
-      userId,
-      ACTIVITY_ACTIONS.CREATE,
-      product.id,
-      product.name,
-      {
-        sku: product.sku,
-        category: product.category,
-        price: product.price,
-        quantity: product.quantity,
-        status: product.status,
-      },
-      request.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown',
-      request.headers.get('user-agent') || undefined
-    )
-
     return NextResponse.json({
       message: 'Product created successfully',
       product
@@ -136,9 +106,18 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Create product error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    throw error // Let middleware handle error translation
   }
 }
+
+// Apply middleware to handlers
+const { GET, POST } = quickMigrate('inventory', {
+  GET: handleGET,
+  POST: handlePOST
+}, {
+  notifications: {
+    triggers: [COMMON_NOTIFICATIONS.lowStock]
+  }
+})
+
+export { GET, POST }
