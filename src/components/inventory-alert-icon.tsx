@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Bell, AlertTriangle } from 'lucide-react'
-import { useSocket } from '@/hooks/use-socket'
+import { useSocketInventory } from '@/hooks/use-socket'
 
 interface StockAlert {
   id: string
@@ -14,23 +14,30 @@ interface StockAlert {
 export function InventoryAlertIcon({ onToggleAlerts }: { onToggleAlerts: () => void }) {
   const [alertCount, setAlertCount] = useState(0)
   const [hasUnresolved, setHasUnresolved] = useState(false)
-  const socket = useSocket()
+  const { alerts, subscribed } = useSocketInventory()
 
   useEffect(() => {
     fetchAlertStatus()
   }, [])
 
+  // Update alert count when socket alerts change
   useEffect(() => {
-    if (socket) {
-      socket.on('inventory-alert', () => {
-        fetchAlertStatus()
-      })
-
-      return () => {
-        socket.off('inventory-alert')
-      }
+    if (alerts.length > 0) {
+      setAlertCount(alerts.length)
+      setHasUnresolved(true)
+    } else {
+      // Fallback to API if no socket alerts
+      fetchAlertStatus()
     }
-  }, [socket])
+  }, [alerts])
+
+  // Fallback polling when socket is not subscribed
+  useEffect(() => {
+    if (!subscribed) {
+      const interval = setInterval(fetchAlertStatus, 30000) // 30s
+      return () => clearInterval(interval)
+    }
+  }, [subscribed])
 
   const fetchAlertStatus = async () => {
     try {

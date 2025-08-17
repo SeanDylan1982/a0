@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Bell, AlertTriangle, XCircle, Package, Eye, X } from 'lucide-react'
-import { useSocket } from '@/hooks/use-socket'
+import { useSocketInventory } from '@/hooks/use-socket'
 import { TooltipButton } from '@/components/tooltip-button'
 
 interface StockAlert {
@@ -29,7 +29,7 @@ export function InventoryAlerts() {
   const [alerts, setAlerts] = useState<StockAlert[]>([])
   const [isVisible, setIsVisible] = useState(false)
   const [lastDismissed, setLastDismissed] = useState<number>(0)
-  const socket = useSocket()
+  const { alerts: socketAlerts, subscribed } = useSocketInventory()
 
   // Expose toggle function to parent
   useEffect(() => {
@@ -49,31 +49,53 @@ export function InventoryAlerts() {
     fetchAlerts()
   }, [])
 
+  // Handle socket alerts
   useEffect(() => {
-    if (socket) {
-      socket.on('inventory-alert', (alert: StockAlert) => {
-        setAlerts(prev => [alert, ...prev.filter(a => a.id !== alert.id)])
-        // Only show if it's a new alert or 24 hours have passed
+    if (socketAlerts.length > 0) {
+      // Convert socket alerts to our StockAlert format
+      const convertedAlerts = socketAlerts.map(alert => ({
+        id: `${alert.productId}-${alert.timestamp}`,
+        productId: alert.productId,
+        product: {
+          sku: alert.productId, // Using productId as SKU for now
+          name: alert.productName,
+          quantity: alert.currentStock,
+          minStock: alert.minimumStock,
+          category: 'Unknown' // Not available in socket alert
+        },
+        type: alert.alertType === 'LOW_STOCK' ? 'LOW_STOCK' as const : 
+              alert.alertType === 'OUT_OF_STOCK' ? 'OUT_OF_STOCK' as const : 'CRITICAL_STOCK' as const,
+        message: `Stock level: ${alert.currentStock} (Min: ${alert.minimumStock})`,
+        severity: alert.alertType === 'CRITICAL' ? 'critical' as const : 
+                 alert.alertType === 'OUT_OF_STOCK' ? 'error' as const : 'warning' as const,
+        createdAt: alert.timestamp.toISOString()
+      }))
+
+      setAlerts(prev => {
+        // Merge with existing alerts, avoiding duplicates
+        const existingIds = prev.map(a => a.id)
+        const newAlerts = convertedAlerts.filter(a => !existingIds.includes(a.id))
+        return [...newAlerts, ...prev]
+      })
+
+      // Show alerts if new ones arrived and enough time has passed
+      if (convertedAlerts.length > 0) {
         const now = Date.now()
         if (now - lastDismissed > 24 * 60 * 60 * 1000) {
           setIsVisible(true)
         }
-      })
-
-      return () => {
-        socket.off('inventory-alert')
       }
     }
-  }, [socket, lastDismissed])
+  }, [socketAlerts, lastDismissed])
 
   // Lightweight polling fallback when sockets are disabled/unavailable
   useEffect(() => {
-    if (socket) return
+    if (subscribed) return // Don't poll if socket is working
     const interval = setInterval(() => {
       fetchAlerts()
     }, 30000) // 30s
     return () => clearInterval(interval)
-  }, [socket])
+  }, [subscribed])
 
   const fetchAlerts = async () => {
     try {
