@@ -1,8 +1,63 @@
 import { Server, Socket } from 'socket.io';
 import { verify } from 'jsonwebtoken';
 import { PrismaClient, UserRole, NotificationType } from '@prisma/client';
+import { dataSyncManager } from '@/lib/services/data-sync-manager';
 
 const prisma = new PrismaClient();
+
+// Setup data sync event listeners
+function setupDataSyncEvents(io: Server) {
+  // Listen for sync events from the data sync manager
+  dataSyncManager.on('sync_completed', (data) => {
+    io.to('management').emit('sync_completed', {
+      rule: data.rule.id,
+      sourceModule: data.event.sourceModule,
+      targetModules: data.rule.targetModules,
+      entityId: data.event.entityId,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  dataSyncManager.on('sync_error', (data) => {
+    io.to('directors').emit('sync_error', {
+      rule: data.rule.id,
+      sourceModule: data.event.sourceModule,
+      targetModules: data.rule.targetModules,
+      entityId: data.event.entityId,
+      error: data.error.message,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  dataSyncManager.on('queue_processing_started', () => {
+    io.to('management').emit('queue_processing_started', {
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  dataSyncManager.on('queue_processing_completed', () => {
+    io.to('management').emit('queue_processing_completed', {
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  dataSyncManager.on('conflict_resolved', (data) => {
+    io.to('management').emit('conflict_resolved', {
+      conflictId: data.conflictId,
+      resolution: data.resolution,
+      resolvedBy: data.userId,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  dataSyncManager.on('product_availability_updated', (data) => {
+    io.to('inventory').emit('product_availability_updated', {
+      productId: data.productId,
+      availableQuantity: data.availableQuantity,
+      lastUpdated: data.lastUpdated
+    });
+  });
+}
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -45,6 +100,9 @@ const NOTIFICATION_CHANNELS = {
 };
 
 export const setupSocket = (io: Server) => {
+  // Set up data sync manager event listeners
+  setupDataSyncEvents(io);
+
   // Authentication middleware
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
@@ -406,5 +464,65 @@ export class SocketBroadcaster {
     if (!this.io) return;
 
     this.io.to(`user:${userId}`).emit('notification:counts', counts);
+  }
+
+  /**
+   * Broadcast data sync status update
+   */
+  static broadcastSyncStatus(status: {
+    entityId: string;
+    entityType: string;
+    status: 'pending' | 'syncing' | 'completed' | 'failed';
+    affectedModules: string[];
+    errorMessage?: string;
+  }) {
+    if (!this.io) return;
+
+    // Broadcast to management for monitoring
+    this.io.to('management').emit('sync:status', status);
+
+    // Broadcast to affected modules
+    status.affectedModules.forEach(module => {
+      this.io.to(module).emit('sync:module:status', {
+        entityId: status.entityId,
+        entityType: status.entityType,
+        status: status.status,
+        module,
+        errorMessage: status.errorMessage
+      });
+    });
+  }
+
+  /**
+   * Broadcast cross-module data update
+   */
+  static broadcastCrossModuleUpdate(update: {
+    sourceModule: string;
+    targetModule: string;
+    entityType: string;
+    entityId: string;
+    action: string;
+    data: any;
+  }) {
+    if (!this.io) return;
+
+    // Broadcast to target module
+    this.io.to(update.targetModule).emit('cross-module:update', {
+      sourceModule: update.sourceModule,
+      entityType: update.entityType,
+      entityId: update.entityId,
+      action: update.action,
+      data: update.data,
+      timestamp: new Date().toISOString()
+    });
+
+    // Broadcast to management for visibility
+    this.io.to('management').emit('cross-module:activity', {
+      sourceModule: update.sourceModule,
+      targetModule: update.targetModule,
+      entityType: update.entityType,
+      entityId: update.entityId,
+      action: update.action
+    });
   }
 }

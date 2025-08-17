@@ -128,6 +128,7 @@ model Customer {
   creditNotes   CreditNote[]
   deliveryNotes DeliveryNote[]
   contacts      CustomerContact[]
+  transactions  Transaction[]
   
   @@map("customers")
 }
@@ -557,11 +558,13 @@ model Transaction {
   type        TransactionType
   amount      Float
   accountId   String           @db.ObjectId
+  customerId  String?          @db.ObjectId
   reference   String?
   createdAt   DateTime         @default(now())
   
   // Relations
   account     Account          @relation(fields: [accountId], references: [id])
+  customer    Customer?        @relation(fields: [customerId], references: [id])
   
   @@map("transactions")
 }
@@ -820,4 +823,18 @@ model Translation {
   
   @@unique([key, language])
   @@map("translations")
+}
+
+model SyncStatus {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  entityId        String   @unique
+  entityType      String
+  status          String   // 'pending', 'syncing', 'completed', 'failed'
+  lastSyncAt      DateTime?
+  errorMessage    String?
+  affectedModules String[] // Array of module names
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@map("sync_statuses")
 }
