@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
     const monthEnd = new Date(currentYear, currentMonth + 1, 0)
 
     const [monthlyRevenue, lastMonthRevenue] = await Promise.all([
-      db.invoice.aggregate({
+      prisma.invoice.aggregate({
         where: {
           status: 'PAID',
           paidDate: {
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
       }),
       
       // Last month revenue for comparison
-      db.invoice.aggregate({
+      prisma.invoice.aggregate({
         where: {
           status: 'PAID',
           paidDate: {
@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
       : 0
 
     // Get recent activities
-    const recentSales = await db.sale.findMany({
+    const recentSales = await prisma.sale.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
     }))
 
     // Get low stock products (simplified for now)
-    const lowStockProducts = await db.product.findMany({
+    const lowStockProducts = await prisma.product.findMany({
       where: {
         quantity: {
           lte: 10 // Simple threshold for now
@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
     })
 
     // Get overdue invoices
-    const overdueInvoices = await db.invoice.findMany({
+    const overdueInvoices = await prisma.invoice.findMany({
       where: {
         status: 'OVERDUE',
         dueDate: {
