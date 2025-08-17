@@ -26,10 +26,7 @@
   - Write comprehensive tests for permission scenarios across all user roles
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-- [-] 4. Central Inventory Pool Service
-
-
-
+- [x] 4. Central Inventory Pool Service
 
   - Create InventoryPool service class with stock availability, reservation, and movement methods
   - Implement stock reservation system with automatic expiration
@@ -39,7 +36,8 @@
   - Write tests for concurrent stock operations and reservation conflicts
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
 
-- [ ] 5. Notification Management System
+- [x] 5. Notification Management System
+
 
   - Create NotificationManager service with creation, delivery, and read status tracking
   - Implement notification priority handling and automatic expiration
