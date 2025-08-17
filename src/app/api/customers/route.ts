@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { executeWithRetry, getDb } from '@/lib/db-manager'
+import { prisma } from '@/lib/prisma'
 
 export async function GET(request: NextRequest) {
   try {
     console.log('Customers API: Starting data fetch...')
     
-    // Get database client with automatic connection management
-    const db = await getDb()
-    
-    // Execute query with retry logic
-    const customers = await executeWithRetry(() => 
-      db.customer.findMany({
+    // Execute query with prisma client
+    const customers = await prisma.customer.findMany({
         include: {
           contacts: true,
           sales: {

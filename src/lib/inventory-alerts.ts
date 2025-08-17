@@ -1,4 +1,4 @@
-import { db } from '@/lib/db-manager'
+import { prisma as db } from '@/lib/prisma'
 // Socket emit is optional; do not import a non-existent export. We'll emit only if a global io exists.
 
 export interface StockAlert {
@@ -158,58 +158,94 @@ export class InventoryAlertManager {
   }
 
   static async updateStock(productId: string, quantityChange: number, reason: string, userId: string) {
-    const product = await db.product.findUnique({
-      where: { id: productId }
-    })
-
-    if (!product) {
-      throw new Error('Product not found')
-    }
-
-    const newQuantity = product.quantity + quantityChange
-
-    if (newQuantity < 0) {
-      throw new Error('Cannot reduce stock below zero')
-    }
-
-    // Update product quantity
-    await db.product.update({
-      where: { id: productId },
-      data: { quantity: newQuantity }
-    })
-
-    // Log inventory change
-    await db.inventoryLog.create({
-      data: {
-        productId,
-        userId,
-        type: quantityChange > 0 ? 'STOCK_IN' : 'STOCK_OUT',
-        quantity: Math.abs(quantityChange),
-        reason,
-        reference: `AUTO-${Date.now()}`
+    // Import InventoryPool dynamically to avoid circular dependency
+    const { InventoryPool } = await import('./services/inventory-pool')
+    
+    try {
+      if (quantityChange > 0) {
+        // For positive changes, record as purchase
+        await InventoryPool.recordMovement({
+          productId,
+          type: 'PURCHASE',
+          quantity: quantityChange,
+          reason,
+          userId,
+          reference: `AUTO-${Date.now()}`
+        })
+      } else {
+        // For negative changes, record as adjustment
+        await InventoryPool.updateStock({
+          productId,
+          quantity: quantityChange,
+          reason,
+          userId
+        })
       }
-    })
 
-    // Check for alerts after stock update
-    const updatedProduct = await db.product.findUnique({
-      where: { id: productId },
-      select: {
-        id: true,
-        sku: true,
-        name: true,
-        quantity: true,
-        minStock: true,
-        category: true
-      }
-    })
+      // Get updated quantity
+      const product = await db.product.findUnique({
+        where: { id: productId },
+        select: { quantity: true }
+      })
 
-    if (updatedProduct) {
-      const alert = this.generateStockAlert(updatedProduct)
-      if (alert) {
-        await this.sendAlert(alert)
+      return product?.quantity || 0
+    } catch (error) {
+      // Fallback to old method if InventoryPool fails
+      console.warn('InventoryPool update failed, using fallback method:', error)
+      
+      const product = await db.product.findUnique({
+        where: { id: productId }
+      })
+
+      if (!product) {
+        throw new Error('Product not found')
       }
+
+      const newQuantity = product.quantity + quantityChange
+
+      if (newQuantity < 0) {
+        throw new Error('Cannot reduce stock below zero')
+      }
+
+      // Update product quantity
+      await db.product.update({
+        where: { id: productId },
+        data: { quantity: newQuantity }
+      })
+
+      // Log inventory change
+      await db.inventoryLog.create({
+        data: {
+          productId,
+          userId,
+          type: quantityChange > 0 ? 'STOCK_IN' : 'STOCK_OUT',
+          quantity: Math.abs(quantityChange),
+          reason,
+          reference: `AUTO-${Date.now()}`
+        }
+      })
+
+      // Check for alerts after stock update
+      const updatedProduct = await db.product.findUnique({
+        where: { id: productId },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          quantity: true,
+          minStock: true,
+          category: true
+        }
+      })
+
+      if (updatedProduct) {
+        const alert = this.generateStockAlert(updatedProduct)
+        if (alert) {
+          await this.sendAlert(alert)
+        }
+      }
+
+      return newQuantity
     }
-
-    return newQuantity
   }
 }

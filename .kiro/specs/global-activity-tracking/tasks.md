@@ -26,7 +26,10 @@
   - Write comprehensive tests for permission scenarios across all user roles
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-- [ ] 4. Central Inventory Pool Service
+- [-] 4. Central Inventory Pool Service
+
+
+
 
   - Create InventoryPool service class with stock availability, reservation, and movement methods
   - Implement stock reservation system with automatic expiration

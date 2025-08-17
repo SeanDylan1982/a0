@@ -1,4 +1,4 @@
-import { db } from '@/lib/db-manager'
+import { prisma as db } from '@/lib/prisma'
 
 const products = [
   {
