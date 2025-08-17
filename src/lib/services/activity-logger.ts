@@ -52,7 +52,7 @@ export class ActivityLogger {
    */
   static async log(activity: ActivityLogData): Promise<void> {
     try {
-      await prisma.activityLog.create({
+      const activityLog = await prisma.activityLog.create({
         data: {
           userId: activity.userId,
           module: activity.module,
@@ -64,7 +64,39 @@ export class ActivityLogger {
           ipAddress: activity.ipAddress,
           userAgent: activity.userAgent,
         },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+            },
+          },
+        },
       })
+
+      // Broadcast activity via Socket.IO
+      try {
+        const { SocketBroadcaster } = await import('@/lib/socket')
+        SocketBroadcaster.broadcastActivity({
+          id: activityLog.id,
+          userId: activityLog.userId,
+          module: activityLog.module,
+          action: activityLog.action,
+          entityType: activityLog.entityType,
+          entityName: activityLog.entityName,
+          timestamp: activityLog.timestamp,
+          user: {
+            name: activityLog.user.name,
+            email: activityLog.user.email,
+            role: activityLog.user.role,
+          },
+        })
+      } catch (socketError) {
+        console.warn('Failed to broadcast activity via socket:', socketError)
+        // Don't throw error - activity was logged successfully
+      }
     } catch (error) {
       console.error('Failed to log activity:', error)
       // Don't throw error to avoid breaking the main operation

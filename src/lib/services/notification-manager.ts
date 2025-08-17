@@ -52,6 +52,24 @@ export class NotificationManager {
         }
       })
 
+      // Broadcast notification via Socket.IO
+      try {
+        const { SocketBroadcaster } = await import('@/lib/socket')
+        SocketBroadcaster.broadcastNotification({
+          id: notification.id,
+          userId: notification.userId,
+          type: notification.type,
+          title: notification.title,
+          message: notification.message,
+          priority: notification.priority,
+          data: notification.data as any,
+          createdAt: notification.createdAt
+        })
+      } catch (socketError) {
+        console.warn('Failed to broadcast notification via socket:', socketError)
+        // Don't throw error - notification was created successfully
+      }
+
       return notification
     } catch (error) {
       console.error('Error creating notification:', error)
@@ -86,6 +104,26 @@ export class NotificationManager {
         orderBy: { createdAt: 'desc' },
         take: result.count
       })
+
+      // Broadcast notifications via Socket.IO
+      try {
+        const { SocketBroadcaster } = await import('@/lib/socket')
+        createdNotifications.forEach(notification => {
+          SocketBroadcaster.broadcastNotification({
+            id: notification.id,
+            userId: notification.userId,
+            type: notification.type,
+            title: notification.title,
+            message: notification.message,
+            priority: notification.priority,
+            data: notification.data as any,
+            createdAt: notification.createdAt
+          })
+        })
+      } catch (socketError) {
+        console.warn('Failed to broadcast bulk notifications via socket:', socketError)
+        // Don't throw error - notifications were created successfully
+      }
 
       return createdNotifications
     } catch (error) {

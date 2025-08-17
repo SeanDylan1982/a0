@@ -89,12 +89,17 @@ export class InventoryAlertManager {
   private static async sendAlert(alert: StockAlert) {
     // Send real-time notification via Socket.IO
     try {
-      const g: any = (globalThis as any)
-      if (g && g.io && typeof g.io.emit === 'function') {
-        g.io.emit('inventory-alert', alert)
-      }
-    } catch (_) {
-      // no-op if socket not available
+      const { SocketBroadcaster } = await import('@/lib/socket')
+      SocketBroadcaster.broadcastInventoryAlert({
+        productId: alert.productId,
+        productName: alert.product.name,
+        currentStock: alert.product.quantity,
+        minimumStock: alert.product.minStock,
+        alertType: alert.type,
+        timestamp: alert.createdAt
+      })
+    } catch (socketError) {
+      console.warn('Failed to broadcast inventory alert via socket:', socketError)
     }
 
     // Create calendar event for critical alerts

@@ -245,6 +245,33 @@ export class InventoryPool {
     // Trigger inventory alerts check
     await InventoryAlertManager.checkStockLevels()
 
+    // Broadcast stock adjustment via Socket.IO
+    try {
+      const product = await db.product.findUnique({
+        where: { id: productId },
+        select: { name: true }
+      })
+
+      if (product) {
+        const { SocketBroadcaster } = await import('@/lib/socket')
+        SocketBroadcaster.broadcastStockMovement({
+          id: result.id,
+          productId: result.productId,
+          productName: product.name,
+          type: result.type,
+          quantity: result.quantity,
+          beforeQty: result.beforeQty,
+          afterQty: result.afterQty,
+          reason: result.reason,
+          userId: result.userId,
+          timestamp: result.timestamp
+        })
+      }
+    } catch (socketError) {
+      console.warn('Failed to broadcast stock adjustment via socket:', socketError)
+      // Don't throw error - adjustment was recorded successfully
+    }
+
     return result
   }
 
@@ -329,6 +356,33 @@ export class InventoryPool {
 
     // Trigger inventory alerts check
     await InventoryAlertManager.checkStockLevels()
+
+    // Broadcast stock movement via Socket.IO
+    try {
+      const product = await db.product.findUnique({
+        where: { id: productId },
+        select: { name: true }
+      })
+
+      if (product) {
+        const { SocketBroadcaster } = await import('@/lib/socket')
+        SocketBroadcaster.broadcastStockMovement({
+          id: result.id,
+          productId: result.productId,
+          productName: product.name,
+          type: result.type,
+          quantity: result.quantity,
+          beforeQty: result.beforeQty,
+          afterQty: result.afterQty,
+          reason: result.reason,
+          userId: result.userId,
+          timestamp: result.timestamp
+        })
+      }
+    } catch (socketError) {
+      console.warn('Failed to broadcast stock movement via socket:', socketError)
+      // Don't throw error - movement was recorded successfully
+    }
 
     return result
   }

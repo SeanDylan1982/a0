@@ -42,6 +42,10 @@ async function createCustomServer() {
     });
 
     setupSocket(io);
+    
+    // Initialize socket broadcaster for other services
+    const { SocketBroadcaster } = await import('@/lib/socket');
+    SocketBroadcaster.setIO(io);
 
     // Start the server
     server.listen(currentPort, hostname, () => {

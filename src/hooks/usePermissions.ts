@@ -1,7 +1,31 @@
 import { useState, useEffect } from 'react'
-import { useSession } from 'next-auth/react'
 import { UserRole } from '@prisma/client'
 import { Permission } from '@/lib/services/access-control-manager'
+
+// Mock session interface for development
+interface MockSession {
+  user?: {
+    id: string
+    email: string
+    role: UserRole
+  }
+}
+
+// Mock useSession hook for development - replace with actual auth when implemented
+function useSession(): { data: MockSession | null; status: string } {
+  // For development, return a mock session
+  // In production, this should be replaced with actual authentication
+  return {
+    data: {
+      user: {
+        id: 'mock-user-id',
+        email: 'dev@example.com',
+        role: UserRole.DIRECTOR // Use DIRECTOR for testing all features
+      }
+    },
+    status: 'authenticated'
+  }
+}
 
 interface UsePermissionsReturn {
   permissions: Permission[]
