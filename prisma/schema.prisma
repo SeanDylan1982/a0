@@ -760,6 +760,11 @@ model Notification {
   
   user        User             @relation(fields: [userId], references: [id])
   
+  // Indexes for performance
+  @@index([userId, read, createdAt])
+  @@index([type, createdAt])
+  @@index([priority, createdAt])
+  @@index([expiresAt])
   @@map("notifications")
 }
 
@@ -791,6 +796,10 @@ model StockReservation {
   product     Product  @relation(fields: [productId], references: [id])
   user        User     @relation(fields: [userId], references: [id])
   
+  // Indexes for performance
+  @@index([productId, expiresAt])
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
   @@map("stock_reservations")
 }
 
@@ -809,6 +818,11 @@ model StockMovement {
   product     Product          @relation(fields: [productId], references: [id])
   user        User             @relation(fields: [userId], references: [id])
   
+  // Indexes for performance
+  @@index([productId, timestamp])
+  @@index([type, timestamp])
+  @@index([userId, timestamp])
+  @@index([timestamp])
   @@map("stock_movements")
 }
 
@@ -822,6 +836,8 @@ model Translation {
   updatedAt   DateTime @updatedAt
   
   @@unique([key, language])
+  @@index([language])
+  @@index([module, language])
   @@map("translations")
 }
 

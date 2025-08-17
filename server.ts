@@ -1,6 +1,7 @@
 // server.ts - Next.js Standalone + Socket.IO
 import { setupSocket } from '@/lib/socket';
 import { CronJobManager } from '@/lib/cron-jobs';
+import { PerformanceInitializer } from '@/lib/init/performance-init';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import next from 'next';
@@ -48,9 +49,12 @@ async function createCustomServer() {
     SocketBroadcaster.setIO(io);
 
     // Start the server
-    server.listen(currentPort, hostname, () => {
+    server.listen(currentPort, hostname, async () => {
       console.log(`> Ready on http://${hostname}:${currentPort}`);
       console.log(`> Socket.IO server running at ws://${hostname}:${currentPort}/api/socketio`);
+      
+      // Initialize performance optimization system
+      await PerformanceInitializer.initialize();
       
       // Start inventory monitoring
       CronJobManager.startInventoryMonitoring();
@@ -64,14 +68,16 @@ async function createCustomServer() {
 }
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
+  await PerformanceInitializer.shutdown();
   CronJobManager.stopAllJobs();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully');
+  await PerformanceInitializer.shutdown();
   CronJobManager.stopAllJobs();
   process.exit(0);
 });
