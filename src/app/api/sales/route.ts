@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { quickMigrate, COMMON_NOTIFICATIONS } from '@/lib/middleware/route-migrator'
 import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
+import { SalesIntegrationService } from '@/lib/services/sales-integration-service'
+
+const salesService = new SalesIntegrationService()
 
 async function handleGET(request: AuthenticatedRequest) {
   try {
@@ -56,8 +59,7 @@ async function handlePOST(request: AuthenticatedRequest) {
       )
     }
 
-    // Calculate totals
-    let subtotal = 0
+    // Validate items
     for (const item of items) {
       if (!item.productId || !item.quantity || !item.price) {
         return NextResponse.json(
@@ -65,59 +67,21 @@ async function handlePOST(request: AuthenticatedRequest) {
           { status: 400 }
         )
       }
-      subtotal += item.quantity * item.price
     }
 
-    // Calculate VAT (15% for South Africa)
-    const tax = subtotal * 0.15
-    const total = subtotal + tax
+    // Get activity context from request
+    const activityContext = {
+      ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown',
+      userAgent: request.headers.get('user-agent') || 'unknown'
+    }
 
-    // Create sale
-    const sale = await prisma.sale.create({
-      data: {
-        customerId,
-        userId: request.user?.id || 'system', // Get from authenticated request
-        status: 'DRAFT',
-        subtotal,
-        tax,
-        total,
-        notes,
-        items: {
-          create: items.map(item => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            price: item.price,
-            total: item.quantity * item.price,
-          }))
-        }
-      },
-      include: {
-        customer: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            company: true,
-          }
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-          }
-        },
-        items: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                sku: true,
-              }
-            }
-          }
-        }
-      }
+    // Create sale using integration service
+    const sale = await salesService.createSale({
+      customerId,
+      items,
+      notes,
+      userId: request.user?.id || 'system',
+      activityContext
     })
 
     return NextResponse.json({
@@ -135,10 +99,6 @@ async function handlePOST(request: AuthenticatedRequest) {
 const { GET, POST } = quickMigrate('sales', {
   GET: handleGET,
   POST: handlePOST
-}, {
-  notifications: {
-    triggers: [COMMON_NOTIFICATIONS.largeTransaction(10000)]
-  }
 })
 
 export { GET, POST }

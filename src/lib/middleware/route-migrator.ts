@@ -268,7 +268,7 @@ export const COMMON_NOTIFICATIONS = {
     priority: 'HIGH' as const,
     title: 'Large Transaction Alert',
     message: `Transaction over R${threshold.toLocaleString()} created`,
-    targetRoles: ['DIRECTOR', 'MANAGER'] as const
+    targetRoles: ['DIRECTOR', 'MANAGER'] as ['DIRECTOR', 'MANAGER']
   }),
   
   lowStock: {
@@ -278,7 +278,7 @@ export const COMMON_NOTIFICATIONS = {
     priority: 'HIGH' as const,
     title: 'Low Stock Alert',
     message: 'Product stock below minimum threshold',
-    targetRoles: ['DIRECTOR', 'MANAGER', 'INVENTORY_MANAGER'] as const
+    targetRoles: ['DIRECTOR', 'MANAGER', 'INVENTORY_MANAGER'] as ['DIRECTOR', 'MANAGER', 'INVENTORY_MANAGER']
   },
   
   newCustomer: {
@@ -288,6 +288,6 @@ export const COMMON_NOTIFICATIONS = {
     priority: 'MEDIUM' as const,
     title: 'New Customer Added',
     message: 'A new customer has been registered',
-    targetRoles: ['DIRECTOR', 'MANAGER'] as const
+    targetRoles: ['DIRECTOR', 'MANAGER'] as ['DIRECTOR', 'MANAGER']
   }
 }

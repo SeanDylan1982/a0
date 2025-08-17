@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { executeWithRetry, getDb } from '@/lib/db-manager'
+import { quickMigrate } from '@/lib/middleware/route-migrator'
+import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
+import { SalesIntegrationService } from '@/lib/services/sales-integration-service'
+
+const salesService = new SalesIntegrationService()
 
 // In-memory cache to hold quotes created while the database is unavailable
 // This will reset on server restart, but enables a functional offline flow
 const offlineQuotes: any[] = []
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   try {
     const db = await getDb()
 
@@ -84,7 +89,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   // Update an existing quote. Accepts body: { id, customerId?, validUntil?, notes?, items?[] }
   let id: string | undefined
   let body: any
@@ -184,7 +189,7 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: AuthenticatedRequest) {
   // Hoist variables so catch can use them for offline fallback without ReferenceError
   let customerId: string | undefined
   let validUntil: string | undefined
@@ -210,8 +215,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Calculate totals
-    subtotal = 0
+    // Validate items
     for (const item of items) {
       if (!item.productId || !item.quantity || !item.price) {
         return NextResponse.json(
@@ -219,46 +223,23 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
-      subtotal += item.quantity * item.price
     }
-    tax = subtotal * 0.15
-    total = subtotal + tax
 
-    const db = await getDb()
+    // Get activity context from request
+    const activityContext = {
+      ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown',
+      userAgent: request.headers.get('user-agent') || 'unknown'
+    }
 
-    const quote = await executeWithRetry(() =>
-      db.quote.create({
-        data: {
-          customerId,
-          status: 'DRAFT',
-          subtotal,
-          tax,
-          total,
-          validUntil,
-          notes,
-          items: {
-            create: items.map((it: any) => ({
-              productId: it.productId,
-              quantity: it.quantity,
-              price: it.price,
-              total: it.total ?? it.quantity * it.price,
-            }))
-          }
-        },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              company: true,
-            }
-          },
-          items: true,
-        }
-      }),
-      'Create Quote'
-    )
+    // Create quote using integration service
+    const quote = await salesService.createQuote({
+      customerId,
+      items,
+      validUntil: new Date(validUntil!),
+      notes,
+      userId: request.user?.id || 'system',
+      activityContext
+    })
 
     return NextResponse.json({
       message: 'Quote created successfully',
@@ -300,3 +281,10 @@ export async function POST(request: NextRequest) {
     )
   }
 }
+
+// Apply middleware to POST only, keep GET and PATCH as-is for now
+const { POST: wrappedPOST } = quickMigrate('sales', {
+  POST: handlePOST
+})
+
+export { handleGET as GET, handlePATCH as PATCH, wrappedPOST as POST }

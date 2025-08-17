@@ -126,7 +126,6 @@
 
 - [x] 14. Inventory Module Integration
 
-
   - Update inventory components to use central inventory pool for all stock operations
   - Implement realistic adjustment forms with required reason selection
   - Add stock reservation interface for sales and purchase order processing
@@ -135,7 +134,8 @@
   - Write tests for inventory operations and alert generation
   - _Requirements: 2.1, 2.2, 2.3, 8.1, 8.2, 8.3, 8.6_
 
-- [ ] 15. Sales and Invoicing Integration
+- [x] 15. Sales and Invoicing Integration
+
 
   - Update sales processes to automatically reserve and update inventory from central pool
   - Implement cross-module data sharing between sales, inventory, and accounting

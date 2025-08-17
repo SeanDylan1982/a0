@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { executeWithRetry, getDb } from '@/lib/db-manager'
+import { quickMigrate } from '@/lib/middleware/route-migrator'
+import { AuthenticatedRequest } from '@/lib/middleware/auth-middleware'
+import { SalesIntegrationService } from '@/lib/services/sales-integration-service'
 
-export async function GET() {
+const salesService = new SalesIntegrationService()
+
+async function handleGET(request: AuthenticatedRequest) {
   try {
     const db = await getDb()
     const invoices = await executeWithRetry(
@@ -11,7 +16,6 @@ export async function GET() {
             customer: {
               select: { id: true, firstName: true, lastName: true, company: true },
             },
-            items: true,
             payments: true,
           },
           orderBy: { createdAt: 'desc' },
@@ -28,7 +32,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: AuthenticatedRequest) {
   try {
     const body = await request.json()
     const { customerId, dueDate, notes, items } = body as {
@@ -45,57 +49,43 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Calculate totals
-    let subtotal = 0
-    for (const it of items) {
-      if (!it.productId || !it.quantity || !it.price) {
+    // Validate items
+    for (const item of items) {
+      if (!item.productId || !item.quantity || !item.price) {
         return NextResponse.json(
           { error: 'Each item must have productId, quantity, and price' },
           { status: 400 }
         )
       }
-      subtotal += it.quantity * it.price
     }
-    const tax = subtotal * 0.15
-    const total = subtotal + tax
 
-    const db = await getDb()
+    // Get activity context from request
+    const activityContext = {
+      ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown',
+      userAgent: request.headers.get('user-agent') || 'unknown'
+    }
 
-    const invoice = await executeWithRetry(
-      () =>
-        db.invoice.create({
-          data: {
-            customerId,
-            status: 'DRAFT',
-            subtotal,
-            tax,
-            total,
-            dueDate,
-            notes,
-            items: {
-              create: items.map((it) => ({
-                productId: it.productId,
-                quantity: it.quantity,
-                price: it.price,
-                total: it.total ?? it.quantity * it.price,
-              })),
-            },
-          },
-          include: {
-            customer: { select: { id: true, firstName: true, lastName: true, company: true } },
-            items: true,
-            payments: true,
-          },
-        }),
-      'Create Invoice'
-    )
+    // Create invoice using integration service
+    const invoice = await salesService.createInvoice({
+      customerId,
+      items,
+      dueDate: dueDate ? new Date(dueDate) : undefined,
+      notes,
+      userId: request.user?.id || 'system',
+      activityContext
+    })
 
     return NextResponse.json({ message: 'Invoice created successfully', invoice })
   } catch (error) {
     console.error('Create invoice error:', error)
-    return NextResponse.json(
-      { error: 'Failed to create invoice' },
-      { status: 500 }
-    )
+    throw error // Let middleware handle error translation
   }
 }
+
+// Apply middleware
+const { GET, POST } = quickMigrate('sales', {
+  GET: handleGET,
+  POST: handlePOST
+})
+
+export { GET, POST }
